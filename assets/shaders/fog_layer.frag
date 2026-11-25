@@ -42,10 +42,15 @@ float fbm(vec2 p, float seed) {
     float freq = 1.0;
     for (int i = 0; i < 4; i++) {
         val += amp * value_noise(p * freq, seed + float(i) * 19.3);
-        freq *= 2.03;
+        freq *= 2.02;
         amp *= 0.5;
     }
     return clamp(val, 0.0, 1.0);
+}
+
+/* Remap narrow fBm [0.28, 0.72] -> [0, 1] for genuine patchy clearings and soft cloud banks */
+float fbm_wide(vec2 p, float seed) {
+    return clamp((fbm(p, seed) - 0.28) / 0.44, 0.0, 1.0);
 }
 
 float henyey_greenstein(float cos_theta, float g) {
@@ -54,6 +59,33 @@ float henyey_greenstein(float cos_theta, float g) {
     float p = (1.0 - g2) / pow(denom, 1.5);
     float peak = (1.0 - g2) / pow(max(1e-3, 1.0 - g), 3.0);
     return clamp(p / max(peak, 1e-5), 0.0, 1.0);
+}
+
+/* Soft billowy stratified fog sheet at FIXED world-space depth plane z (zero depth-contour distortion) */
+float fog_sheet_density(vec2 uv, float z, float seed) {
+    float persp = 0.35 + (1.0 - z) * 0.95;
+    /* Gently stratified horizontal mist banks (~1.7x wider than tall) */
+    vec2 p = vec2((uv.x - 0.5) / persp * 0.78, (uv.y - u_horizon_y) / persp * 1.35);
+    p = p * (u_noise_scale * 0.52) + vec2(seed * 0.13, -seed * 0.09);
+
+    /* Subtle low-frequency drift warp keeps clouds silky without marbled creases */
+    float qx = fbm_wide(p * 0.65, seed) - 0.5;
+    float qy = fbm_wide(p * 0.65 + vec2(4.7, 1.9), seed + 17.0) - 0.5;
+    vec2 warped = p + vec2(qx * 0.85, qy * 0.45) * u_noise_amount;
+
+    float macro = fbm_wide(warped * 0.82, seed + 31.0);
+    float detail = fbm_wide(warped * 1.85, seed + 67.0);
+    float cloud = clamp(macro * 0.72 + detail * 0.28, 0.0, 1.0);
+
+    float patchy = smoothstep(0.16 * u_noise_amount, 0.92 - 0.06 * u_noise_amount, cloud);
+    float turb = mix(1.0, 0.08 + 1.35 * patchy * patchy, u_noise_amount);
+
+    /* Perspective 3D ceiling at world depth z, softly feathered by cloud billows */
+    float ceiling = u_horizon_y + (1.0 - z) * 0.13 + (macro - 0.5) * 0.14 * u_noise_amount;
+    float above = max(0.0, ceiling - uv.y);
+    float h_att = exp(-u_height_falloff * above * 2.8);
+
+    return turb * h_att;
 }
 
 void main() {
@@ -66,8 +98,8 @@ void main() {
 
     float d = texture(u_depth, v_uv).r;
 
-    /* 1. True Beer-Lambert depth-integrated slab: ZERO fog in front of depth_min */
-    float d_enter = smoothstep(u_depth_min - 0.035, u_depth_min + 0.075, d);
+    /* 1. Zero foreground bleed: ray only enters fog past depth_min */
+    float d_enter = smoothstep(u_depth_min - 0.03, u_depth_min + 0.06, d);
     if (d_enter <= 0.0005) {
         frag_color = prev;
         return;
@@ -75,37 +107,35 @@ void main() {
     float d_exit = (u_depth_max < 0.985)
         ? (1.0 - smoothstep(u_depth_max - 0.08, u_depth_max + 0.04, d))
         : 1.0;
+
+    /* 2. True fixed-plane 5-slice volumetric ray-march between depth_min and depth_max */
     float d_span = max(0.08, u_depth_max - u_depth_min);
-    float d_prog = clamp((d - u_depth_min) / d_span, 0.0, 1.0);
-    float depth_weight = d_enter * d_exit * (0.15 + 0.85 * pow(d_prog, 1.3));
+    float slice_tau = 0.0;
+    float macro_ref = 0.0;
+    for (int s = 0; s < 5; s++) {
+        float frac = (float(s) + 0.5) / 5.0;
+        float z_s = u_depth_min + d_span * frac;
+        /* Only integrate fog planes that physically lie IN FRONT of this pixel's surface d */
+        float in_front = smoothstep(z_s - 0.065, z_s + 0.055, d);
+        if (in_front <= 0.0005) continue;
+        float sheet = fog_sheet_density(v_uv, z_s, u_seed + float(s) * 29.0);
+        float weight = (0.75 + 0.50 * frac) * 0.22;
+        slice_tau += sheet * in_front * weight;
+        macro_ref = max(macro_ref, sheet * in_front);
+    }
 
-    /* 2. 3D depth-sliced volumetric turbulence (each depth plane cuts different wisps) */
-    float persp = 0.22 + abs(v_uv.y - u_horizon_y) * 2.4;
-    vec2 ground_uv = vec2((v_uv.x - 0.5) / (persp + 0.25), (v_uv.y - u_horizon_y) / (persp + 0.15));
-    vec2 p3d = ground_uv * u_noise_scale + vec2(d * 2.3, -d * 1.4);
-    float n1 = fbm(p3d, u_seed);
-    float n2 = fbm(p3d * 2.1 + vec2(n1 * 1.1, -n1 * 0.8) + vec2(-d * 1.7, d * 2.0), u_seed + 41.0);
-    float n = mix(n1, n2, 0.45);
+    /* Break circular marker edges organically using accumulated volumetric wisps */
+    float edge_m = smoothstep(0.04, 0.90, m + (macro_ref - 0.50) * u_noise_amount * 0.65);
+    float m_org = mix(m, m * (0.25 + 1.05 * edge_m), u_noise_amount);
 
-    /* Break circular marker edges into drifting mist tendrils */
-    float wispy = smoothstep(0.06, 0.90, m + (n - 0.52) * u_noise_amount * 1.2);
-    float m_org = mix(m, m * (0.28 + 1.08 * wispy), u_noise_amount);
-    float turb = 1.0 - u_noise_amount * 0.52 + u_noise_amount * 0.98 * n;
-
-    /* 3. Perspective 3D fog ceiling so mist pools in low valleys and clears high peaks/sky */
-    float ceiling = u_horizon_y + (1.0 - d) * 0.10;
-    float above = max(0.0, ceiling - v_uv.y);
-    float h_att = exp(-u_height_falloff * max(0.0, above * 2.8 - (n - 0.48) * 0.22 * u_noise_amount));
-
-    float tau = u_density * m_org * depth_weight * h_att * turb;
+    float tau = u_density * m_org * d_enter * d_exit * slice_tau;
     float trans = exp(-tau);
     float opacity = 1.0 - trans;
 
-    /* 4. Scene-illumination-coupled airlight + directional Henyey-Greenstein sun scatter */
+    /* 3. Scene-illumination-coupled airlight + directional Henyey-Greenstein sun scatter */
     vec3 amb = texture(u_ambient, v_uv).rgb;
     float amb_lum = dot(amb, vec3(0.2126, 0.7152, 0.0722));
-    /* Fog catches warm light in sunlit clearings and stays subtle/cool in dark shadows */
-    vec3 local_air = mix(u_airlight, u_airlight * (0.38 + 1.15 * sqrt(max(amb_lum, 0.0))) + amb * 0.30, 0.65);
+    vec3 local_air = mix(u_airlight, u_airlight * (0.40 + 1.12 * sqrt(max(amb_lum, 0.0))) + amb * 0.28, 0.65);
 
     float ang = clamp(length(v_uv - u_sun_pos) * 2.2, 0.0, 3.14159265);
     float sun_boost = u_sun_strength * henyey_greenstein(cos(ang), u_sun_g) * (0.35 + 0.65 * sqrt(max(amb_lum, 0.0)));

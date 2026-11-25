@@ -20,6 +20,11 @@ function M.handle_key(key, ctrl, shift)
     elseif key == "E" then nebel.brush.set_tool("eraser")
     elseif key == "P" then nebel.brush.set_tool("protect")
     elseif key == "S" then nebel.brush.set_tool("sun")
+    elseif key == "R" and nebel.layers.count() > 0 then
+        local idx = nebel.layers.active()
+        local cur = nebel.layers.get(idx, "noise_seed") or 1337
+        nebel.layers.set(idx, "noise_seed", ((cur * 1664525 + 1013904223) % 9000) + 1)
+        nebel.view.set_status("Randomized fog wisp pattern")
     elseif key == "[" then nebel.brush.set_radius(nebel.brush.get_radius() * 0.82)
     elseif key == "]" then nebel.brush.set_radius(nebel.brush.get_radius() * 1.22)
     elseif key == "SPACE" then

@@ -13,9 +13,9 @@ M.sliders = {
     { key = "depth_min",      label = "Near Depth",     min = 0.0, max = 0.95 },
     { key = "depth_max",      label = "Far Depth",      min = 0.15, max = 1.0 },
     { key = "height_falloff", label = "Height Falloff", min = 0.0, max = 6.0 },
-    { key = "horizon_y",      label = "Fog Ceiling",    min = 0.05, max = 0.95 },
+    { key = "noise_amount",   label = "Patchiness",     min = 0.0, max = 1.0 },
+    { key = "noise_scale",    label = "Wisp Scale",     min = 1.5, max = 14.0 },
     { key = "sun_strength",   label = "Sun Glow",       min = 0.0, max = 1.6 },
-    { key = "noise_amount",   label = "Wisp Clouds",    min = 0.0, max = 1.0 },
     { key = "bloom_amount",   label = "Veiling Bloom",  min = 0.0, max = 1.2 },
     { key = "grain_match",    label = "Grain Match",    min = 0.0, max = 2.0 },
 }

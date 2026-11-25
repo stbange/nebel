@@ -398,7 +398,7 @@ static void test_app_and_lua_bridge(void) {
         "density", "height_falloff", "horizon_y", "depth_min", "depth_max",
         "airlight_r", "airlight_g", "airlight_b", "sun_x", "sun_y",
         "sun_strength", "sun_anisotropy", "noise_scale", "noise_amount",
-        "bloom_amount", "grain_match", "edge_refine", "visible"
+        "bloom_amount", "grain_match", "edge_refine", "noise_seed", "visible"
     };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
         CHECK(nebel_app_set_layer_param(&app, 0, keys[i], 0.5f));

@@ -38,6 +38,7 @@ static const char *map_key_name(SDL_Keycode key) {
     case SDLK_D: return "D";
     case SDLK_E: return "E";
     case SDLK_P: return "P";
+    case SDLK_R: return "R";
     case SDLK_S: return "S";
     case SDLK_Z: return "Z";
     case SDLK_Y: return "Y";

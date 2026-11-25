@@ -203,6 +203,7 @@ bool nebel_app_set_layer_param(NebelAppState *app, int index, const char *key, f
     else if (strcmp(key, "bloom_amount") == 0) p->bloom_amount = value;
     else if (strcmp(key, "grain_match") == 0) p->grain_match = value;
     else if (strcmp(key, "edge_refine") == 0) p->edge_refine = value;
+    else if (strcmp(key, "noise_seed") == 0) p->noise_seed = (uint32_t)(value > 0.0f ? value : 1.0f);
     else if (strcmp(key, "visible") == 0) p->visible = (value >= 0.5f);
     else return false;
 
@@ -231,6 +232,7 @@ bool nebel_app_get_layer_param(const NebelAppState *app, int index, const char *
     else if (strcmp(key, "bloom_amount") == 0) *out_val = p->bloom_amount;
     else if (strcmp(key, "grain_match") == 0) *out_val = p->grain_match;
     else if (strcmp(key, "edge_refine") == 0) *out_val = p->edge_refine;
+    else if (strcmp(key, "noise_seed") == 0) *out_val = (float)p->noise_seed;
     else if (strcmp(key, "visible") == 0) *out_val = p->visible ? 1.0f : 0.0f;
     else return false;
     return true;

@@ -174,8 +174,13 @@ local function draw_desktop_sidebar(vw, vh)
 
     -- Physics sliders for active layer
     if lcount > 0 then
-        nebel.ui.label(sx + pad, y, "ATMOSPHERE PHYSICS", 0.60, 0.66, 0.74, 1.0)
-        if nebel.ui.button(185, sx + sw - pad - 68, y - 4, 68, 22, "SkyTint", false, -1) then
+        nebel.ui.label(sx + pad, y, "ATMOSPHERE", 0.60, 0.66, 0.74, 1.0)
+        if nebel.ui.button(184, sx + sw - pad - 122, y - 4, 52, 22, "Seed", false, -1) then
+            local cur = nebel.layers.get(active, "noise_seed") or 1337
+            nebel.layers.set(active, "noise_seed", ((cur * 1664525 + 1013904223) % 9000) + 1)
+            nebel.view.set_status("Randomized fog wisp pattern")
+        end
+        if nebel.ui.button(185, sx + sw - pad - 66, y - 4, 66, 22, "SkyTint", false, -1) then
             nebel.view.sample_airlight(-1, -1)
         end
         y = y + 22
