@@ -22,6 +22,8 @@ typedef struct {
     float noise_scale;    /* [1.0, 24.0] Procedural turbulence frequency */
     float noise_amount;   /* [0.0, 1.0] Density modulation amplitude */
     float bloom_amount;   /* [0.0, 1.5] Highlight veiling glare strength */
+    float god_rays;       /* [0.0, 1.5] Crepuscular sunbeam scattering strength */
+    float shadow_pool;    /* [0.0, 1.0] Shadow/trough fog pooling bias */
     float grain_match;    /* [0.0, 2.0] Sensor grain matching multiplier */
     float edge_refine;    /* [0.0, 1.0] Guided Filter edge snapping strength */
     uint32_t noise_seed;

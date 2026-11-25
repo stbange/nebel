@@ -25,3 +25,4 @@ Asset Inventory & Third-Party Notices:
 - assets/fonts/DejaVuSans.ttf — DejaVu Fonts (Bitstream Vera / Arev permissive free license;
   kept external beside the binary and documented here for clarity)
 - third_party/stb_*.h — Sean Barrett (MIT / Public Domain)
+- third_party/onnxruntime_c_api.h — Microsoft Corporation ONNX Runtime C API header (MIT License)

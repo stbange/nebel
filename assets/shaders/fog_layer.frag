@@ -17,6 +17,7 @@ uniform float u_sun_strength;
 uniform float u_sun_g;
 uniform float u_noise_scale;
 uniform float u_noise_amount;
+uniform float u_shadow_pool;
 uniform float u_seed;
 
 float hash21(vec2 p, float seed) {
@@ -128,7 +129,12 @@ void main() {
     float edge_m = smoothstep(0.04, 0.90, m + (macro_ref - 0.50) * u_noise_amount * 0.65);
     float m_org = mix(m, m * (0.25 + 1.05 * edge_m), u_noise_amount);
 
-    float tau = u_density * m_org * d_enter * d_exit * slice_tau;
+    /* Shadow / trough pooling bias: mist gathers thicker in dark cool hollows */
+    float px_lum = dot(prev.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float darkness = 1.0 - smoothstep(0.06, 0.78, sqrt(max(px_lum, 0.0)));
+    float pool_factor = mix(1.0, 0.35 + 1.15 * darkness, u_shadow_pool);
+
+    float tau = u_density * m_org * d_enter * d_exit * slice_tau * pool_factor;
     float trans = exp(-tau);
     float opacity = 1.0 - trans;
 

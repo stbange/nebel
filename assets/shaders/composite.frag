@@ -10,6 +10,8 @@ uniform float u_grain_sigma;
 uniform float u_split_enabled;
 uniform float u_split_pos;
 uniform float u_show_depth;
+uniform vec2  u_sun_pos;
+uniform float u_god_rays;
 
 vec3 linear_to_srgb(vec3 c) {
     c = clamp(c, 0.0, 1.0);
@@ -41,6 +43,33 @@ void main() {
     vec3 bloom = texture(u_bloom, v_uv).rgb;
 
     vec3 col = fog.rgb + bloom * (fog.a * u_bloom_amount * 0.75);
+
+    /* Volumetric crepuscular sunbeams occluded by foreground 3D depth */
+    if (u_god_rays > 0.001 && fog.a > 0.001) {
+        float d_here = texture(u_depth, v_uv).r;
+        float fg_vis = smoothstep(0.18, 0.46, d_here);
+        if (fg_vis > 0.001) {
+            float jitter = hash12(gl_FragCoord.xy);
+            vec2 step_uv = (u_sun_pos - v_uv) * (0.85 / 16.0);
+            vec2 s_uv = v_uv + step_uv * jitter;
+            float decay = 1.0;
+            float shaft = 0.0;
+            for (int i = 0; i < 16; i++) {
+                s_uv += step_uv;
+                if (s_uv.x < 0.0 || s_uv.x > 1.0 || s_uv.y < 0.0 || s_uv.y > 1.0) break;
+                float sd = texture(u_depth, s_uv).r;
+                vec3 sc = texture(u_orig, s_uv).rgb;
+                float slum = dot(sc, vec3(0.2126, 0.7152, 0.0722));
+                float open = smoothstep(0.38, 0.68, sd);
+                float bright = smoothstep(0.28, 0.88, sqrt(max(slum, 0.0)));
+                shaft += open * bright * decay;
+                decay *= 0.90;
+            }
+            float fog_w = smoothstep(0.0, 0.25, fog.a) * (0.30 + 0.70 * fog.a);
+            float gain = (shaft / 16.0) * u_god_rays * fog_w * fg_vis * 0.65;
+            col += vec3(1.18, 0.98, 0.70) * gain;
+        }
+    }
 
     if (u_grain_sigma > 0.00001 && fog.a > 0.001) {
         float g = (hash12(gl_FragCoord.xy) + hash12(gl_FragCoord.xy + vec2(17.1, 31.7)) - 1.0)

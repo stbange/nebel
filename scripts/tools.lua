@@ -15,7 +15,11 @@ function M.handle_key(key, ctrl, shift)
         return
     end
     if ctrl and key == "Y" then nebel.view.redo(); return end
-    if key == "B" then nebel.brush.set_tool("fog")
+    if key == "A" then
+        local on = not nebel.brush.get_auto_depth()
+        nebel.brush.set_auto_depth(on)
+        nebel.view.set_status(on and "AutoLock ON: brush click sets Near Depth" or "AutoLock OFF: manual Near Depth")
+    elseif key == "B" then nebel.brush.set_tool("fog")
     elseif key == "D" then nebel.view.set_show_depth(not nebel.view.show_depth())
     elseif key == "E" then nebel.brush.set_tool("eraser")
     elseif key == "P" then nebel.brush.set_tool("protect")

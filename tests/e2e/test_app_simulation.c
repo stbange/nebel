@@ -199,23 +199,49 @@ int main(void) {
     nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_up(&app.touch, 2, 320, 320, 2010));
     ASSERT_TRUE(app.zoom > z0 * 1.4f);
 
-    /* 7. External neural depth map upsampling check (low-res 16x12 -> full-res Guided Filter) */
+    /* 7. External neural depth map + AutoLock brush depth anchoring check */
     float nn_depth[16 * 12];
     for (int i = 0; i < 16 * 12; i++) nn_depth[i] = 0.85f - 0.25f * ((float)(i / 16) / 11.0f);
     ASSERT_TRUE(nebel_app_set_external_depth(&app, nn_depth, 16, 12));
     ASSERT_TRUE(app.depth_is_neural);
 
-    /* 8. Full-resolution PNG & JPEG export + reload verification */
+    ASSERT_TRUE(!app.auto_depth_brush);
+    ASSERT_TRUE(nebel_lua_on_key(&lua, "A", false, false));
+    ASSERT_TRUE(app.auto_depth_brush);
+    ASSERT_TRUE(nebel_lua_on_key(&lua, "B", false, false));
+    nebel_app_stroke_begin(&app, 0.25f, 0.15f);
+    nebel_app_stroke_end(&app);
+    ASSERT_TRUE(app.layers[app.active_layer].params.depth_min > 0.50f);
+    ASSERT_TRUE(nebel_app_undo(&app));
+    ASSERT_TRUE(nebel_lua_on_key(&lua, "A", false, false));
+    ASSERT_TRUE(!app.auto_depth_brush);
+
+    /* 8. Full-resolution PNG, JPEG, 16-bit PNG, and 16-bit TIFF export verification */
     const char *out_png = "/tmp/nebel_e2e_export.png";
     const char *out_jpg = "/tmp/nebel_e2e_export.jpg";
+    const char *out_png16 = "/tmp/nebel_e2e_export16.png";
+    const char *out_tif16 = "/tmp/nebel_e2e_export16.tiff";
     ASSERT_TRUE(nebel_app_export_png(&app, out_png));
     ASSERT_TRUE(nebel_app_export_jpg(&app, out_jpg, 92));
+    ASSERT_TRUE(nebel_app_export_png16(&app, out_png16));
+    ASSERT_TRUE(nebel_app_export_tiff16(&app, out_tif16));
 
     NebelImage reloaded = {0};
     ASSERT_TRUE(nebel_image_load_file(&reloaded, out_png));
     ASSERT_TRUE(reloaded.width == W && reloaded.height == H);
     ASSERT_TRUE(pixel_luma(&reloaded, 24, 40) > orig_bg + 0.08f);
     nebel_image_free(&reloaded);
+
+    ASSERT_TRUE(nebel_image_load_file(&reloaded, out_png16));
+    ASSERT_TRUE(reloaded.width == W && reloaded.height == H);
+    nebel_image_free(&reloaded);
+
+    FILE *tf = fopen(out_tif16, "rb");
+    ASSERT_TRUE(tf != NULL);
+    uint8_t thdr[4] = {0};
+    ASSERT_TRUE(fread(thdr, 1, 4, tf) == 4);
+    fclose(tf);
+    ASSERT_TRUE(thdr[0] == 'I' && thdr[1] == 'I' && thdr[2] == 42 && thdr[3] == 0);
 
     ASSERT_TRUE(nebel_image_load_file(&reloaded, out_jpg));
     ASSERT_TRUE(reloaded.width == W && reloaded.height == H);
@@ -227,6 +253,6 @@ int main(void) {
     nebel_lua_free(&lua);
     nebel_app_free(&app);
 
-    printf("E2E automated simulation test PASSED (manifest, desktop, touch, multi-layer fog, Guided Filter, ONNX depth, export).\n");
+    printf("E2E automated simulation test PASSED (manifest, desktop, touch, multi-layer fog, god rays, shadow pool, auto-depth, 16-bit export).\n");
     return 0;
 }

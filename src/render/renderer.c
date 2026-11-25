@@ -452,6 +452,8 @@ void nebel_renderer_draw(NebelRenderer *r, NebelAppState *app,
         int ping = 0;
         float max_bloom = 0.0f;
         float max_grain = 0.0f;
+        float max_god_rays = 0.0f;
+        float rays_sun_x = 0.72f, rays_sun_y = 0.22f;
 
         glUseProgram(r->prog_fog);
         glViewport(0, 0, w, h);
@@ -470,6 +472,11 @@ void nebel_renderer_draw(NebelRenderer *r, NebelAppState *app,
             const NebelFogParams *p = &layer->params;
             if (p->bloom_amount > max_bloom) max_bloom = p->bloom_amount;
             if (p->grain_match > max_grain) max_grain = p->grain_match;
+            if (p->god_rays > max_god_rays) {
+                max_god_rays = p->god_rays;
+                rays_sun_x = p->sun_x;
+                rays_sun_y = p->sun_y;
+            }
 
             glBindFramebuffer(GL_FRAMEBUFFER, r->fbo_ping[ping]);
             glActiveTexture(GL_TEXTURE0);
@@ -489,6 +496,7 @@ void nebel_renderer_draw(NebelRenderer *r, NebelAppState *app,
             glUniform1f(glGetUniformLocation(r->prog_fog, "u_sun_g"), p->sun_anisotropy);
             glUniform1f(glGetUniformLocation(r->prog_fog, "u_noise_scale"), p->noise_scale);
             glUniform1f(glGetUniformLocation(r->prog_fog, "u_noise_amount"), p->noise_amount);
+            glUniform1f(glGetUniformLocation(r->prog_fog, "u_shadow_pool"), p->shadow_pool);
             glUniform1f(glGetUniformLocation(r->prog_fog, "u_seed"), (float)(p->noise_seed % 10000u));
 
             /* Render into FBO preserving row-0 = top-of-image UV orientation */
@@ -518,7 +526,7 @@ void nebel_renderer_draw(NebelRenderer *r, NebelAppState *app,
         glUniform1i(glGetUniformLocation(r->prog_bloom, "u_extract"), 0);
         draw_quad(r->prog_bloom, 0, 0, (float)bw, (float)bh, (float)bw, (float)bh, 0, 1, 1, 0);
 
-        /* 3. Final composite to default framebuffer (linear -> sRGB + split divider + depth view) */
+        /* 3. Final composite to default framebuffer (linear -> sRGB + god rays + split + depth) */
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, fb_w, fb_h);
         glClearColor(0.055f, 0.062f, 0.074f, 1.0f);
@@ -540,6 +548,8 @@ void nebel_renderer_draw(NebelRenderer *r, NebelAppState *app,
         glUniform1f(glGetUniformLocation(r->prog_comp, "u_split_enabled"), app->split_enabled ? 1.0f : 0.0f);
         glUniform1f(glGetUniformLocation(r->prog_comp, "u_split_pos"), app->split_pos);
         glUniform1f(glGetUniformLocation(r->prog_comp, "u_show_depth"), app->show_depth ? 1.0f : 0.0f);
+        glUniform2f(glGetUniformLocation(r->prog_comp, "u_sun_pos"), rays_sun_x, rays_sun_y);
+        glUniform1f(glGetUniformLocation(r->prog_comp, "u_god_rays"), max_god_rays);
         draw_quad(r->prog_comp, cx, cy, cw, ch, (float)vw, (float)vh, 0, 0, 1, 1);
     } else {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);

@@ -89,10 +89,12 @@ static void test_image_module(void) {
     CHECK(!nebel_image_load_memory(&bad, junk, sizeof(junk)));
     CHECK(!nebel_image_save_png(&bad, "x.png"));
     CHECK(!nebel_image_save_jpg(&bad, "x.jpg", 90));
+    CHECK(!nebel_image_save_png16(&bad, "x16.png"));
+    CHECK(!nebel_image_save_tiff16(&bad, "x16.tif"));
     CHECK(!nebel_image_downsample(&bad, &bad, 16));
     CHECK_NEAR(nebel_image_estimate_noise(&bad), 0.0f, 1e-6f);
 
-    /* RGBA8 conversion + PNG/JPEG memory & file round-trip + downsample + airlight + noise */
+    /* RGBA8 conversion + PNG/JPEG/PNG16/TIFF16 memory & file round-trip + downsample + airlight + noise */
     NebelImage img = make_synthetic_scene(64, 48);
     uint8_t *rgba8 = (uint8_t *)malloc(64u * 48u * 4u);
     nebel_image_to_rgba8(&img, rgba8);
@@ -102,8 +104,10 @@ static void test_image_module(void) {
     CHECK(from8.width == 64 && from8.height == 48);
     nebel_image_free(&from8);
 
-    uint8_t *png_buf = NULL, *jpg_buf = NULL;
-    size_t png_len = 0, jpg_len = 0;
+    uint8_t *png_buf = NULL, *jpg_buf = NULL, *png16_buf = NULL, *tif16_buf = NULL;
+    size_t png_len = 0, jpg_len = 0, png16_len = 0, tif16_len = 0;
+    CHECK(!nebel_image_encode_png16_mem(&bad, &png16_buf, &png16_len));
+    CHECK(!nebel_image_encode_tiff16_mem(&bad, &tif16_buf, &tif16_len));
     CHECK(nebel_image_encode_png_mem(&img, &png_buf, &png_len));
     CHECK(png_buf && png_len > 64);
     CHECK(nebel_image_encode_jpg_mem(&img, 5, &jpg_buf, &jpg_len));
@@ -111,6 +115,23 @@ static void test_image_module(void) {
     free(jpg_buf);
     CHECK(nebel_image_encode_jpg_mem(&img, 120, &jpg_buf, &jpg_len));
     CHECK(jpg_buf && jpg_len > 64);
+
+    /* 16-bit RGBA PNG header (bit_depth=16 at offset 24, color_type=6 at offset 25) + decode */
+    CHECK(nebel_image_encode_png16_mem(&img, &png16_buf, &png16_len));
+    CHECK(png16_buf && png16_len > 64);
+    CHECK(png16_buf[0] == 137 && png16_buf[1] == 'P' && png16_buf[2] == 'N' && png16_buf[3] == 'G');
+    CHECK(png16_buf[24] == 16 && png16_buf[25] == 6);
+    NebelImage dec16 = {0};
+    CHECK(nebel_image_load_memory(&dec16, png16_buf, png16_len));
+    CHECK(dec16.width == 64 && dec16.height == 48);
+    nebel_image_free(&dec16);
+    free(png16_buf);
+
+    /* 16-bit RGB Baseline TIFF header ('I','I',42,0) + exact byte size */
+    CHECK(nebel_image_encode_tiff16_mem(&img, &tif16_buf, &tif16_len));
+    CHECK(tif16_buf && tif16_len == (size_t)(8 + 2 + 11 * 12 + 4 + 12 + 64 * 48 * 6));
+    CHECK(tif16_buf[0] == 'I' && tif16_buf[1] == 'I' && tif16_buf[2] == 42 && tif16_buf[3] == 0);
+    free(tif16_buf);
 
     NebelImage dec = {0};
     CHECK(nebel_image_load_memory(&dec, png_buf, png_len));
@@ -121,7 +142,12 @@ static void test_image_module(void) {
 
     CHECK(nebel_image_save_png(&img, "/tmp/nebel_unit_test.png"));
     CHECK(nebel_image_save_jpg(&img, "/tmp/nebel_unit_test.jpg", 90));
+    CHECK(nebel_image_save_png16(&img, "/tmp/nebel_unit_test_16.png"));
+    CHECK(nebel_image_save_tiff16(&img, "/tmp/nebel_unit_test_16.tiff"));
     CHECK(nebel_image_load_file(&dec, "/tmp/nebel_unit_test.png"));
+    CHECK(dec.width == 64 && dec.height == 48);
+    nebel_image_free(&dec);
+    CHECK(nebel_image_load_file(&dec, "/tmp/nebel_unit_test_16.png"));
     CHECK(dec.width == 64 && dec.height == 48);
     nebel_image_free(&dec);
     CHECK(nebel_image_load_file(&dec, "/tmp/nebel_unit_test.jpg"));
@@ -269,6 +295,84 @@ static void test_brush_and_fog_module(void) {
     nebel_fog_layer_free(&layers[1]);
     nebel_image_free(&out0); nebel_image_free(&out1); nebel_image_free(&out2);
     nebel_image_free(&img);
+
+    /* Shadow pooling bias: dark hollow gets thicker fog while bright rock gets lighter fog */
+    NebelImage pool_img = {0};
+    CHECK(nebel_image_alloc(&pool_img, 64, 48));
+    float pool_depth[64 * 48];
+    for (int y = 0; y < 48; y++) {
+        for (int x = 0; x < 64; x++) {
+            float *px = &pool_img.rgba[(y * 64 + x) * 4];
+            float v = (x < 32) ? 0.04f : 0.85f;
+            px[0] = v; px[1] = v; px[2] = v; px[3] = 1.0f;
+            pool_depth[y * 64 + x] = 0.85f;
+        }
+    }
+    NebelFogLayer pl;
+    CHECK(nebel_fog_layer_init(&pl, "Pool", 64, 48));
+    memset(pl.mask, 255, 64u * 48u);
+    pl.params.density = 1.6f;
+    pl.params.depth_min = 0.2f; pl.params.depth_max = 1.0f;
+    pl.params.height_falloff = 0.0f;
+    pl.params.noise_amount = 0.0f;
+    pl.params.sun_strength = 0.0f;
+    pl.params.bloom_amount = 0.0f;
+    pl.params.god_rays = 0.0f;
+    pl.params.grain_match = 0.0f;
+    pl.params.edge_refine = 0.0f;
+    pl.params.airlight[0] = 0.35f; pl.params.airlight[1] = 0.35f; pl.params.airlight[2] = 0.35f;
+
+    NebelImage out_nopool = {0}, out_pool = {0};
+    pl.params.shadow_pool = 0.0f;
+    CHECK(nebel_fog_render_cpu(&pool_img, pool_depth, 64, 48, NULL, 0, 0, &pl, 1, 0.0f, &out_nopool));
+    pl.params.shadow_pool = 1.0f;
+    CHECK(nebel_fog_render_cpu(&pool_img, pool_depth, 64, 48, NULL, 0, 0, &pl, 1, 0.0f, &out_pool));
+
+    size_t dark_px = (24u * 64u + 12u) * 4u;
+    size_t bright_px = (24u * 64u + 52u) * 4u;
+    /* In the dark hollow, shadow_pool=1.0 thickens fog (higher lift toward airlight) */
+    CHECK(out_pool.rgba[dark_px] > out_nopool.rgba[dark_px] + 0.02f);
+    /* On the bright sunlit face, shadow_pool=1.0 thins fog (less shift from original 0.85) */
+    CHECK(fabsf(out_pool.rgba[bright_px] - pool_img.rgba[bright_px]) <
+          fabsf(out_nopool.rgba[bright_px] - pool_img.rgba[bright_px]) - 0.01f);
+    nebel_image_free(&out_nopool);
+    nebel_image_free(&out_pool);
+
+    /* Crepuscular sunbeams: warm light shafts brighten fogged background while foreground stays protected */
+    NebelImage ray_img = {0};
+    CHECK(nebel_image_alloc(&ray_img, 64, 48));
+    float ray_depth[64 * 48];
+    for (int y = 0; y < 48; y++) {
+        for (int x = 0; x < 64; x++) {
+            float *px = &ray_img.rgba[(y * 64 + x) * 4];
+            if (y < 16) {
+                px[0] = 0.96f; px[1] = 0.94f; px[2] = 0.90f; /* Bright sunlit sky */
+                ray_depth[y * 64 + x] = 0.92f;
+            } else {
+                px[0] = 0.06f; px[1] = 0.08f; px[2] = 0.07f; /* Valley */
+                ray_depth[y * 64 + x] = (x >= 44 && x <= 56 && y >= 24) ? 0.10f : 0.82f;
+            }
+            px[3] = 1.0f;
+        }
+    }
+    pl.params.shadow_pool = 0.0f;
+    pl.params.sun_x = 0.50f; pl.params.sun_y = 0.10f;
+    NebelImage out_norays = {0}, out_rays = {0};
+    pl.params.god_rays = 0.0f;
+    CHECK(nebel_fog_render_cpu(&ray_img, ray_depth, 64, 48, NULL, 0, 0, &pl, 1, 0.0f, &out_norays));
+    pl.params.god_rays = 1.2f;
+    CHECK(nebel_fog_render_cpu(&ray_img, ray_depth, 64, 48, NULL, 0, 0, &pl, 1, 0.0f, &out_rays));
+
+    size_t valley_px = (30u * 64u + 32u) * 4u;
+    size_t fg_occ_px = (32u * 64u + 50u) * 4u;
+    CHECK(out_rays.rgba[valley_px] > out_norays.rgba[valley_px] + 0.05f);
+    CHECK_NEAR(out_rays.rgba[fg_occ_px], out_norays.rgba[fg_occ_px], 1e-4f);
+
+    nebel_fog_layer_free(&pl);
+    nebel_image_free(&pool_img);
+    nebel_image_free(&ray_img);
+    nebel_image_free(&out_norays);
+    nebel_image_free(&out_rays);
 }
 
 static void test_undo_touch_ui_manifest(void) {
@@ -398,7 +502,8 @@ static void test_app_and_lua_bridge(void) {
         "density", "height_falloff", "horizon_y", "depth_min", "depth_max",
         "airlight_r", "airlight_g", "airlight_b", "sun_x", "sun_y",
         "sun_strength", "sun_anisotropy", "noise_scale", "noise_amount",
-        "bloom_amount", "grain_match", "edge_refine", "noise_seed", "visible"
+        "bloom_amount", "god_rays", "shadow_pool",
+        "grain_match", "edge_refine", "noise_seed", "visible"
     };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
         CHECK(nebel_app_set_layer_param(&app, 0, keys[i], 0.5f));
@@ -408,6 +513,26 @@ static void test_app_and_lua_bridge(void) {
     float dummy = 0.0f;
     CHECK(!nebel_app_set_layer_param(&app, 0, "nope", 1.0f));
     CHECK(!nebel_app_get_layer_param(&app, 0, "nope", &dummy));
+
+    /* Auto-anchored brush depth samples 5x5 local depth on Fog stroke begin */
+    for (int i = 0; i < app.work_img.width * app.work_img.height; i++) {
+        int x = i % app.work_img.width;
+        app.depth_map[i] = (x > app.work_img.width / 2) ? 0.80f : 0.20f;
+    }
+    app.layers[0].params.depth_min = 0.10f;
+    app.layers[0].params.depth_max = 1.00f;
+    app.active_tool = NEBEL_TOOL_FOG;
+    app.auto_depth_brush = true;
+    nebel_app_stroke_begin(&app, 0.80f, 0.50f);
+    nebel_app_stroke_end(&app);
+    CHECK_NEAR(app.layers[0].params.depth_min, 0.66f, 0.02f);
+    app.auto_depth_brush = false;
+
+    /* 16-bit PNG & TIFF app export wrappers (valid & error paths) */
+    CHECK(!nebel_app_export_png16(NULL, "/tmp/bad.png"));
+    CHECK(!nebel_app_export_tiff16(NULL, "/tmp/bad.tiff"));
+    CHECK(nebel_app_export_png16(&app, "/tmp/nebel_app_unit_16.png"));
+    CHECK(nebel_app_export_tiff16(&app, "/tmp/nebel_app_unit_16.tiff"));
 
     /* Add/select/remove layer + sun tool + stroke cancel */
     int l2 = nebel_app_add_layer(&app, "Ridge Haze");
@@ -445,12 +570,16 @@ static void test_app_and_lua_bridge(void) {
         "assert(nebel.layers.select(idx))\n"
         "assert(nebel.layers.set(idx, 'density', 1.7))\n"
         "assert(math.abs(nebel.layers.get(idx, 'density') - 1.7) < 0.01)\n"
+        "assert(nebel.layers.set(idx, 'god_rays', 0.8))\n"
+        "assert(nebel.layers.set(idx, 'shadow_pool', 0.6))\n"
         "assert(nebel.layers.get(idx, 'bad_key') == nil)\n"
         "assert(nebel.layers.clear(idx))\n"
         "assert(nebel.layers.remove(idx))\n"
         "assert(nebel.brush.set_tool('protect'))\n"
         "assert(nebel.brush.get_tool() == 'protect')\n"
         "assert(not nebel.brush.set_tool('invalid'))\n"
+        "nebel.brush.set_auto_depth(true); assert(nebel.brush.get_auto_depth())\n"
+        "nebel.brush.set_auto_depth(false); assert(not nebel.brush.get_auto_depth())\n"
         "nebel.brush.set_radius(0.12); assert(math.abs(nebel.brush.get_radius()-0.12)<0.01)\n"
         "nebel.brush.set_opacity(0.7); assert(math.abs(nebel.brush.get_opacity()-0.7)<0.01)\n"
         "nebel.brush.set_softness(0.5); assert(math.abs(nebel.brush.get_softness()-0.5)<0.01)\n"
@@ -465,12 +594,16 @@ static void test_app_and_lua_bridge(void) {
         "nebel.view.set_show_depth(false); assert(not nebel.view.show_depth())\n"
         "nebel.view.set_status('ok'); assert(nebel.view.status() == 'ok')\n"
         "local cx,cy,cw,ch = nebel.view.canvas_rect(); assert(cw > 0 and ch > 0)\n"
-        "nebel.io.open_photo(); nebel.io.export_png(); nebel.io.export_jpg(90); nebel.io.reload_scripts()\n"
+        "nebel.io.open_photo(); nebel.io.export_png(); nebel.io.export_jpg(90)\n"
+        "nebel.io.export_png16(); nebel.io.export_tiff16(); nebel.io.reload_scripts()\n"
         "assert(not nebel.io.load_sample('../bad.png'))\n"
         "nebel.audio.set_muted(true); assert(nebel.audio.is_muted())\n"
         "nebel.audio.set_muted(false); nebel.audio.play('assets/sounds/ui_click.wav', 0.5)\n"
         "local vw, vh = nebel.ui.viewport_size(); local mx, my = nebel.ui.pointer_pos()\n";
     CHECK(nebel_lua_eval(&lua, script));
+    CHECK(app.req_export_png16 && app.req_export_tiff16);
+    app.req_export_png16 = false;
+    app.req_export_tiff16 = false;
 
     /* Memory load (valid & invalid), bad file load, classical depth recompute, layer-count undo */
     CHECK(!nebel_app_load_image_file(&app, "/nonexistent/nebel_missing.png"));
@@ -511,9 +644,16 @@ static void test_app_and_lua_bridge(void) {
     nebel_ui_begin_frame(&app.ui, 1280, 760, 600, 400, false, false, false);
     CHECK(nebel_lua_on_ui(&lua, 1280, 760));
     nebel_ui_end_frame(&app.ui);
+    CHECK(nebel_lua_on_key(&lua, "A", false, false));
+    CHECK(app.auto_depth_brush);
+    CHECK(nebel_lua_on_key(&lua, "A", false, false));
+    CHECK(!app.auto_depth_brush);
     CHECK(nebel_lua_on_key(&lua, "B", false, false));
+    CHECK(nebel_lua_on_key(&lua, "D", false, false));
+    CHECK(nebel_lua_on_key(&lua, "D", false, false));
     CHECK(nebel_lua_on_key(&lua, "E", false, false));
     CHECK(nebel_lua_on_key(&lua, "P", false, false));
+    CHECK(nebel_lua_on_key(&lua, "R", false, false));
     CHECK(nebel_lua_on_key(&lua, "S", false, false));
     CHECK(nebel_lua_on_key(&lua, "[", false, false));
     CHECK(nebel_lua_on_key(&lua, "]", false, false));

@@ -27,8 +27,12 @@ bool nebel_image_load_file(NebelImage *img, const char *path);
 bool nebel_image_load_memory(NebelImage *img, const uint8_t *bytes, size_t len);
 bool nebel_image_save_png(const NebelImage *img, const char *path);
 bool nebel_image_save_jpg(const NebelImage *img, const char *path, int quality);
+bool nebel_image_save_png16(const NebelImage *img, const char *path);
+bool nebel_image_save_tiff16(const NebelImage *img, const char *path);
 bool nebel_image_encode_png_mem(const NebelImage *img, uint8_t **out_buf, size_t *out_len);
 bool nebel_image_encode_jpg_mem(const NebelImage *img, int quality, uint8_t **out_buf, size_t *out_len);
+bool nebel_image_encode_png16_mem(const NebelImage *img, uint8_t **out_buf, size_t *out_len);
+bool nebel_image_encode_tiff16_mem(const NebelImage *img, uint8_t **out_buf, size_t *out_len);
 
 bool nebel_image_downsample(const NebelImage *src, NebelImage *dst, int max_dim);
 float nebel_image_estimate_noise(const NebelImage *img);

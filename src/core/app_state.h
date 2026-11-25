@@ -35,6 +35,7 @@ typedef struct {
 
     NebelTool active_tool;
     NebelBrushParams brush;
+    bool auto_depth_brush;
     bool stroke_in_progress;
     float last_stroke_x, last_stroke_y;
     uint8_t *stroke_backup; /* Restored if multi-touch cancels a tentative stroke */
@@ -57,6 +58,8 @@ typedef struct {
     bool req_open_dialog;
     bool req_export_png;
     bool req_export_jpg;
+    bool req_export_png16;
+    bool req_export_tiff16;
     int req_jpg_quality;
     bool req_auto_depth;
     bool req_reload_scripts;
@@ -107,5 +110,7 @@ void nebel_app_set_status(NebelAppState *app, const char *msg);
 bool nebel_app_render_full(const NebelAppState *app, NebelImage *out);
 bool nebel_app_export_png(const NebelAppState *app, const char *path);
 bool nebel_app_export_jpg(const NebelAppState *app, const char *path, int quality);
+bool nebel_app_export_png16(const NebelAppState *app, const char *path);
+bool nebel_app_export_tiff16(const NebelAppState *app, const char *path);
 
 #endif /* NEBEL_CORE_APP_STATE_H */

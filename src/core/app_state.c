@@ -201,6 +201,8 @@ bool nebel_app_set_layer_param(NebelAppState *app, int index, const char *key, f
     else if (strcmp(key, "noise_scale") == 0) p->noise_scale = value;
     else if (strcmp(key, "noise_amount") == 0) p->noise_amount = value;
     else if (strcmp(key, "bloom_amount") == 0) p->bloom_amount = value;
+    else if (strcmp(key, "god_rays") == 0) p->god_rays = value;
+    else if (strcmp(key, "shadow_pool") == 0) p->shadow_pool = value;
     else if (strcmp(key, "grain_match") == 0) p->grain_match = value;
     else if (strcmp(key, "edge_refine") == 0) p->edge_refine = value;
     else if (strcmp(key, "noise_seed") == 0) p->noise_seed = (uint32_t)(value > 0.0f ? value : 1.0f);
@@ -230,6 +232,8 @@ bool nebel_app_get_layer_param(const NebelAppState *app, int index, const char *
     else if (strcmp(key, "noise_scale") == 0) *out_val = p->noise_scale;
     else if (strcmp(key, "noise_amount") == 0) *out_val = p->noise_amount;
     else if (strcmp(key, "bloom_amount") == 0) *out_val = p->bloom_amount;
+    else if (strcmp(key, "god_rays") == 0) *out_val = p->god_rays;
+    else if (strcmp(key, "shadow_pool") == 0) *out_val = p->shadow_pool;
     else if (strcmp(key, "grain_match") == 0) *out_val = p->grain_match;
     else if (strcmp(key, "edge_refine") == 0) *out_val = p->edge_refine;
     else if (strcmp(key, "noise_seed") == 0) *out_val = (float)p->noise_seed;
@@ -296,6 +300,34 @@ void nebel_app_stroke_begin(NebelAppState *app, float u, float v) {
         app->layers[app->active_layer].params.sun_y = clampf(v, 0.0f, 1.0f);
         app->stroke_in_progress = true;
         return;
+    }
+
+    if (app->auto_depth_brush && app->active_tool == NEBEL_TOOL_FOG && app->depth_map) {
+        int w = app->work_img.width;
+        int h = app->work_img.height;
+        int cx = (int)(clampf(u, 0.0f, 1.0f) * (float)(w - 1) + 0.5f);
+        int cy = (int)(clampf(v, 0.0f, 1.0f) * (float)(h - 1) + 0.5f);
+        float sum = 0.0f;
+        int cnt = 0;
+        for (int dy = -2; dy <= 2; dy++) {
+            int py = cy + dy;
+            if (py < 0 || py >= h) continue;
+            for (int dx = -2; dx <= 2; dx++) {
+                int px = cx + dx;
+                if (px < 0 || px >= w) continue;
+                sum += app->depth_map[(size_t)py * (size_t)w + (size_t)px];
+                cnt++;
+            }
+        }
+        if (cnt > 0) {
+            float d_click = sum / (float)cnt;
+            float d_min = clampf(d_click - 0.14f, 0.0f, 0.85f);
+            app->layers[app->active_layer].params.depth_min = d_min;
+            nebel_fog_params_clamp(&app->layers[app->active_layer].params);
+            char msg[128];
+            snprintf(msg, sizeof(msg), "AutoLock: Near Depth %.2f (sampled %.2f)", d_min, d_click);
+            nebel_app_set_status(app, msg);
+        }
     }
 
     uint8_t *mask = active_stroke_mask(app);
@@ -468,6 +500,24 @@ bool nebel_app_export_jpg(const NebelAppState *app, const char *path, int qualit
     NebelImage rendered = {0};
     if (!nebel_app_render_full(app, &rendered)) return false;
     bool ok = nebel_image_save_jpg(&rendered, path, quality);
+    nebel_image_free(&rendered);
+    return ok;
+}
+
+bool nebel_app_export_png16(const NebelAppState *app, const char *path) {
+    if (!app || !path) return false;
+    NebelImage rendered = {0};
+    if (!nebel_app_render_full(app, &rendered)) return false;
+    bool ok = nebel_image_save_png16(&rendered, path);
+    nebel_image_free(&rendered);
+    return ok;
+}
+
+bool nebel_app_export_tiff16(const NebelAppState *app, const char *path) {
+    if (!app || !path) return false;
+    NebelImage rendered = {0};
+    if (!nebel_app_render_full(app, &rendered)) return false;
+    bool ok = nebel_image_save_tiff16(&rendered, path);
     nebel_image_free(&rendered);
     return ok;
 }

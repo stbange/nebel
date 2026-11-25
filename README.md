@@ -6,9 +6,9 @@
 
 ## Features
 
-- **Linear-light fog physics:** Koschmieder atmospheric scattering, exponential height/valley falloff, perspective-foreshortened turbulence, directional sun forward-scattering (Henyey-Greenstein), highlight bloom/veiling glare, and automatic sensor grain matching.
-- **Wildlife & foliage edge matting:** Built-in O(1) Guided Filter + classical depth cues (horizon gradient, defocus sharpness, Dark Channel Prior) + optional browser/desktop **Depth Anything V2 Small (ONNX)** auto-depth with automatic classical fallback.
-- **Photographer workflow:** Multiple independent fog layers, transparent Fog Marker, Eraser, Foreground-Protect brush, Sun-direction picker, Before/After split comparison, Undo/Redo, Lua-scripted presets, and full-resolution PNG/JPEG export.
+- **Volumetric linear-light fog physics:** 5-slice fixed-plane ray-marching with Koschmieder scattering, exponential height/valley falloff, stratified billowy wisps, shadow/trough pooling bias (`Shadow Pool`), depth-occluded crepuscular sunbeams (`God Rays`), scene-ambient illumination coupling, Henyey-Greenstein sun forward-scattering, veiling glare bloom, and sensor grain matching.
+- **Wildlife & foliage edge matting:** Built-in O(1) Guided Filter + classical depth cues + browser (`onnxruntime-web`) & native desktop (`libonnxruntime` + `assets/models/depth_anything_v2_vits.onnx` or `model_quantized.onnx`) **Depth Anything V2 Small** 3D depth with automatic classical fallback and `AutoLock` (`A`) click-to-anchor brush depth.
+- **Photographer workflow:** Multiple independent fog layers, transparent Fog Marker, Eraser, Foreground-Protect brush, Sun-direction picker, Depth Map overlay (`D`), Before/After split comparison (`Space`), Undo/Redo, Lua-scripted presets, and full-resolution **8-bit PNG, JPEG, 16-bit lossless PNG, and 16-bit print TIFF** export.
 - **Adaptive Web & Mobile Touch:** Runs on Windows, Linux, macOS, and Web (Emscripten/WebGL2) with automatic touch controls (1-finger paint, 2-finger pinch-zoom/pan, 2-finger tap undo, collapsible mobile drawer).
 - **Extendable by design:** Shaders (`assets/shaders/`), icons, audio, sample photos (`assets/`), and application logic/UI/presets (`scripts/*.lua`) live beside the binary—never baked into the executable or `.wasm`.
 

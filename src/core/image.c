@@ -201,6 +201,187 @@ bool nebel_image_encode_jpg_mem(const NebelImage *img, int quality, uint8_t **ou
     return true;
 }
 
+static void put_be32(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16);
+    p[2] = (uint8_t)(v >> 8);  p[3] = (uint8_t)(v & 0xFFu);
+}
+
+static void put_le16(uint8_t *p, uint16_t v) {
+    p[0] = (uint8_t)(v & 0xFFu); p[1] = (uint8_t)(v >> 8);
+}
+
+static void put_le32(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)(v & 0xFFu);        p[1] = (uint8_t)((v >> 8) & 0xFFu);
+    p[2] = (uint8_t)((v >> 16) & 0xFFu); p[3] = (uint8_t)(v >> 24);
+}
+
+static uint8_t *write_png_chunk(uint8_t *dst, const char tag[4], const uint8_t *data, uint32_t len) {
+    put_be32(dst, len);
+    memcpy(dst + 4, tag, 4);
+    if (len > 0 && data) memcpy(dst + 8, data, len);
+    uint32_t crc = stbiw__crc32(dst + 4, (int)(len + 4u));
+    put_be32(dst + 8u + len, crc);
+    return dst + 12u + len;
+}
+
+bool nebel_image_encode_png16_mem(const NebelImage *img, uint8_t **out_buf, size_t *out_len) {
+    if (!img || !img->rgba || !out_buf || !out_len || img->width <= 0 || img->height <= 0) {
+        return false;
+    }
+    size_t row_bytes = 1u + (size_t)img->width * 8u;
+    size_t raw_len = row_bytes * (size_t)img->height;
+    if (raw_len > (size_t)INT32_MAX / 2u) return false;
+
+    uint8_t *raw = (uint8_t *)malloc(raw_len);
+    if (!raw) return false;
+    for (int y = 0; y < img->height; y++) {
+        uint8_t *row = raw + (size_t)y * row_bytes;
+        row[0] = 0;
+        uint8_t *dst = row + 1;
+        for (int x = 0; x < img->width; x++) {
+            const float *p = &img->rgba[((size_t)y * (size_t)img->width + (size_t)x) * 4u];
+            uint16_t r = (uint16_t)(nebel_linear_to_srgb(p[0]) * 65535.0f + 0.5f);
+            uint16_t g = (uint16_t)(nebel_linear_to_srgb(p[1]) * 65535.0f + 0.5f);
+            uint16_t b = (uint16_t)(nebel_linear_to_srgb(p[2]) * 65535.0f + 0.5f);
+            uint16_t a = (uint16_t)(clamp01(p[3]) * 65535.0f + 0.5f);
+            dst[0] = (uint8_t)(r >> 8); dst[1] = (uint8_t)(r & 0xFFu);
+            dst[2] = (uint8_t)(g >> 8); dst[3] = (uint8_t)(g & 0xFFu);
+            dst[4] = (uint8_t)(b >> 8); dst[5] = (uint8_t)(b & 0xFFu);
+            dst[6] = (uint8_t)(a >> 8); dst[7] = (uint8_t)(a & 0xFFu);
+            dst += 8;
+        }
+    }
+
+    int zlen = 0;
+    unsigned char *zdata = stbi_zlib_compress(raw, (int)raw_len, &zlen, 6);
+    free(raw);
+    if (!zdata || zlen <= 0) {
+        STBIW_FREE(zdata);
+        return false;
+    }
+
+    size_t total = 8u + (12u + 13u) + (12u + (size_t)zlen) + 12u;
+    uint8_t *png = (uint8_t *)malloc(total);
+    if (!png) {
+        STBIW_FREE(zdata);
+        return false;
+    }
+
+    static const uint8_t sig[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
+    memcpy(png, sig, 8);
+    uint8_t ihdr[13];
+    put_be32(ihdr + 0, (uint32_t)img->width);
+    put_be32(ihdr + 4, (uint32_t)img->height);
+    ihdr[8] = 16; /* 16-bit per channel */
+    ihdr[9] = 6;  /* RGBA */
+    ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+
+    uint8_t *cur = png + 8;
+    cur = write_png_chunk(cur, "IHDR", ihdr, 13);
+    cur = write_png_chunk(cur, "IDAT", zdata, (uint32_t)zlen);
+    cur = write_png_chunk(cur, "IEND", NULL, 0);
+    STBIW_FREE(zdata);
+
+    *out_buf = png;
+    *out_len = (size_t)(cur - png);
+    return true;
+}
+
+static void write_tiff_tag(uint8_t *p, uint16_t tag, uint16_t type, uint32_t count, uint32_t val) {
+    put_le16(p + 0, tag);
+    put_le16(p + 2, type);
+    put_le32(p + 4, count);
+    put_le32(p + 8, val);
+}
+
+bool nebel_image_encode_tiff16_mem(const NebelImage *img, uint8_t **out_buf, size_t *out_len) {
+    if (!img || !img->rgba || !out_buf || !out_len || img->width <= 0 || img->height <= 0) {
+        return false;
+    }
+    size_t npix = (size_t)img->width * (size_t)img->height;
+    size_t pix_bytes = npix * 6u;
+    if (pix_bytes > 0xE0000000u) return false;
+
+    const uint32_t num_tags = 11u;
+    const uint32_t ifd_off = 8u;
+    const uint32_t bps_off = ifd_off + 2u + num_tags * 12u + 4u;
+    const uint32_t fmt_off = bps_off + 6u;
+    const uint32_t data_off = fmt_off + 6u;
+    size_t total = (size_t)data_off + pix_bytes;
+
+    uint8_t *buf = (uint8_t *)calloc(1u, total);
+    if (!buf) return false;
+
+    buf[0] = 'I'; buf[1] = 'I';
+    put_le16(buf + 2, 42);
+    put_le32(buf + 4, ifd_off);
+
+    uint8_t *t = buf + ifd_off;
+    put_le16(t, (uint16_t)num_tags);
+    t += 2;
+    write_tiff_tag(t, 256, 4, 1, (uint32_t)img->width);  t += 12;
+    write_tiff_tag(t, 257, 4, 1, (uint32_t)img->height); t += 12;
+    write_tiff_tag(t, 258, 3, 3, bps_off);               t += 12;
+    write_tiff_tag(t, 259, 3, 1, 1);                     t += 12;
+    write_tiff_tag(t, 262, 3, 1, 2);                     t += 12;
+    write_tiff_tag(t, 273, 4, 1, data_off);              t += 12;
+    write_tiff_tag(t, 277, 3, 1, 3);                     t += 12;
+    write_tiff_tag(t, 278, 4, 1, (uint32_t)img->height); t += 12;
+    write_tiff_tag(t, 279, 4, 1, (uint32_t)pix_bytes);   t += 12;
+    write_tiff_tag(t, 284, 3, 1, 1);                     t += 12;
+    write_tiff_tag(t, 339, 3, 3, fmt_off);               t += 12;
+    put_le32(t, 0);
+
+    put_le16(buf + bps_off + 0, 16);
+    put_le16(buf + bps_off + 2, 16);
+    put_le16(buf + bps_off + 4, 16);
+    put_le16(buf + fmt_off + 0, 1);
+    put_le16(buf + fmt_off + 2, 1);
+    put_le16(buf + fmt_off + 4, 1);
+
+    uint8_t *px = buf + data_off;
+    for (size_t i = 0; i < npix; i++) {
+        const float *p = &img->rgba[i * 4u];
+        put_le16(px + 0, (uint16_t)(nebel_linear_to_srgb(p[0]) * 65535.0f + 0.5f));
+        put_le16(px + 2, (uint16_t)(nebel_linear_to_srgb(p[1]) * 65535.0f + 0.5f));
+        put_le16(px + 4, (uint16_t)(nebel_linear_to_srgb(p[2]) * 65535.0f + 0.5f));
+        px += 6;
+    }
+
+    *out_buf = buf;
+    *out_len = total;
+    return true;
+}
+
+static bool write_bytes_file(const char *path, const uint8_t *buf, size_t len) {
+    if (!path || path[0] == '\0' || !buf || len == 0) return false;
+    FILE *f = fopen(path, "wb");
+    if (!f) return false;
+    bool ok = (fwrite(buf, 1, len, f) == len);
+    fclose(f);
+    return ok;
+}
+
+bool nebel_image_save_png16(const NebelImage *img, const char *path) {
+    if (!img || !path || path[0] == '\0') return false;
+    uint8_t *buf = NULL;
+    size_t len = 0;
+    if (!nebel_image_encode_png16_mem(img, &buf, &len)) return false;
+    bool ok = write_bytes_file(path, buf, len);
+    free(buf);
+    return ok;
+}
+
+bool nebel_image_save_tiff16(const NebelImage *img, const char *path) {
+    if (!img || !path || path[0] == '\0') return false;
+    uint8_t *buf = NULL;
+    size_t len = 0;
+    if (!nebel_image_encode_tiff16_mem(img, &buf, &len)) return false;
+    bool ok = write_bytes_file(path, buf, len);
+    free(buf);
+    return ok;
+}
+
 bool nebel_image_downsample(const NebelImage *src, NebelImage *dst, int max_dim) {
     if (!src || !src->rgba || !dst || max_dim <= 0) return false;
     int max_s = src->width > src->height ? src->width : src->height;

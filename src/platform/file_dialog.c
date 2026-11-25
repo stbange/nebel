@@ -67,6 +67,36 @@ void nebel_file_dialog_poll(NebelAppState *app, SDL_Window *window) {
         free(buf);
         nebel_image_free(&out);
     }
+    if (app->req_export_png16) {
+        app->req_export_png16 = false;
+        NebelImage out = {0};
+        uint8_t *buf = NULL;
+        size_t len = 0;
+        if (nebel_app_render_full(app, &out) && nebel_image_encode_png16_mem(&out, &buf, &len)) {
+            nebel_js_download_file(buf, (int)len, "nebel_export_16bit.png", "image/png");
+            nebel_app_queue_audio(app, "assets/sounds/export_shutter.wav", 0.55f);
+            nebel_app_set_status(app, "Exported 16-bit lossless PNG");
+        } else {
+            nebel_app_set_status(app, "16-bit PNG export failed");
+        }
+        free(buf);
+        nebel_image_free(&out);
+    }
+    if (app->req_export_tiff16) {
+        app->req_export_tiff16 = false;
+        NebelImage out = {0};
+        uint8_t *buf = NULL;
+        size_t len = 0;
+        if (nebel_app_render_full(app, &out) && nebel_image_encode_tiff16_mem(&out, &buf, &len)) {
+            nebel_js_download_file(buf, (int)len, "nebel_export_16bit.tiff", "image/tiff");
+            nebel_app_queue_audio(app, "assets/sounds/export_shutter.wav", 0.55f);
+            nebel_app_set_status(app, "Exported 16-bit print TIFF");
+        } else {
+            nebel_app_set_status(app, "16-bit TIFF export failed");
+        }
+        free(buf);
+        nebel_image_free(&out);
+    }
 }
 
 #else
@@ -75,29 +105,31 @@ static SDL_Mutex *g_dlg_mutex = NULL;
 static char g_pending_open[512] = {0};
 static char g_pending_save_png[512] = {0};
 static char g_pending_save_jpg[512] = {0};
+static char g_pending_save_png16[512] = {0};
+static char g_pending_save_tiff16[512] = {0};
 
-static void SDLCALL on_open_cb(void *userdata, const char *const *filelist, int filter) {
-    (void)userdata; (void)filter;
+static void store_pending(char dst[512], const char *const *filelist) {
     if (!filelist || !filelist[0]) return;
     SDL_LockMutex(g_dlg_mutex);
-    snprintf(g_pending_open, sizeof(g_pending_open), "%s", filelist[0]);
+    snprintf(dst, 512, "%s", filelist[0]);
     SDL_UnlockMutex(g_dlg_mutex);
 }
 
-static void SDLCALL on_save_png_cb(void *userdata, const char *const *filelist, int filter) {
-    (void)userdata; (void)filter;
-    if (!filelist || !filelist[0]) return;
-    SDL_LockMutex(g_dlg_mutex);
-    snprintf(g_pending_save_png, sizeof(g_pending_save_png), "%s", filelist[0]);
-    SDL_UnlockMutex(g_dlg_mutex);
-}
+static void SDLCALL on_open_cb(void *u, const char *const *fl, int f) { (void)u; (void)f; store_pending(g_pending_open, fl); }
+static void SDLCALL on_save_png_cb(void *u, const char *const *fl, int f) { (void)u; (void)f; store_pending(g_pending_save_png, fl); }
+static void SDLCALL on_save_jpg_cb(void *u, const char *const *fl, int f) { (void)u; (void)f; store_pending(g_pending_save_jpg, fl); }
+static void SDLCALL on_save_png16_cb(void *u, const char *const *fl, int f) { (void)u; (void)f; store_pending(g_pending_save_png16, fl); }
+static void SDLCALL on_save_tiff16_cb(void *u, const char *const *fl, int f) { (void)u; (void)f; store_pending(g_pending_save_tiff16, fl); }
 
-static void SDLCALL on_save_jpg_cb(void *userdata, const char *const *filelist, int filter) {
-    (void)userdata; (void)filter;
-    if (!filelist || !filelist[0]) return;
+static bool take_pending(char src[512], char out[512]) {
+    out[0] = '\0';
     SDL_LockMutex(g_dlg_mutex);
-    snprintf(g_pending_save_jpg, sizeof(g_pending_save_jpg), "%s", filelist[0]);
+    if (src[0]) {
+        snprintf(out, 512, "%s", src);
+        src[0] = '\0';
+    }
     SDL_UnlockMutex(g_dlg_mutex);
+    return out[0] != '\0';
 }
 
 void nebel_file_dialog_init(NebelAppState *app) {
@@ -125,26 +157,22 @@ void nebel_file_dialog_poll(NebelAppState *app, SDL_Window *window) {
         static const SDL_DialogFileFilter filters[] = { { "JPEG Image", "jpg;jpeg" } };
         SDL_ShowSaveFileDialog(on_save_jpg_cb, NULL, window, filters, 1, "nebel_export.jpg");
     }
-
-    char path[512] = {0};
-    SDL_LockMutex(g_dlg_mutex);
-    if (g_pending_open[0]) {
-        snprintf(path, sizeof(path), "%s", g_pending_open);
-        g_pending_open[0] = '\0';
+    if (app->req_export_png16) {
+        app->req_export_png16 = false;
+        static const SDL_DialogFileFilter filters[] = { { "16-bit PNG Image", "png" } };
+        SDL_ShowSaveFileDialog(on_save_png16_cb, NULL, window, filters, 1, "nebel_export_16bit.png");
     }
-    SDL_UnlockMutex(g_dlg_mutex);
-    if (path[0]) {
+    if (app->req_export_tiff16) {
+        app->req_export_tiff16 = false;
+        static const SDL_DialogFileFilter filters[] = { { "16-bit TIFF Image", "tiff;tif" } };
+        SDL_ShowSaveFileDialog(on_save_tiff16_cb, NULL, window, filters, 1, "nebel_export_16bit.tiff");
+    }
+
+    char path[512];
+    if (take_pending(g_pending_open, path)) {
         nebel_app_load_image_file(app, path);
     }
-
-    path[0] = '\0';
-    SDL_LockMutex(g_dlg_mutex);
-    if (g_pending_save_png[0]) {
-        snprintf(path, sizeof(path), "%s", g_pending_save_png);
-        g_pending_save_png[0] = '\0';
-    }
-    SDL_UnlockMutex(g_dlg_mutex);
-    if (path[0]) {
+    if (take_pending(g_pending_save_png, path)) {
         if (nebel_app_export_png(app, path)) {
             nebel_app_queue_audio(app, "assets/sounds/export_shutter.wav", 0.55f);
             nebel_app_set_status(app, "Exported full-resolution PNG");
@@ -152,20 +180,28 @@ void nebel_file_dialog_poll(NebelAppState *app, SDL_Window *window) {
             nebel_app_set_status(app, "PNG export failed");
         }
     }
-
-    path[0] = '\0';
-    SDL_LockMutex(g_dlg_mutex);
-    if (g_pending_save_jpg[0]) {
-        snprintf(path, sizeof(path), "%s", g_pending_save_jpg);
-        g_pending_save_jpg[0] = '\0';
-    }
-    SDL_UnlockMutex(g_dlg_mutex);
-    if (path[0]) {
+    if (take_pending(g_pending_save_jpg, path)) {
         if (nebel_app_export_jpg(app, path, app->req_jpg_quality)) {
             nebel_app_queue_audio(app, "assets/sounds/export_shutter.wav", 0.55f);
             nebel_app_set_status(app, "Exported full-resolution JPEG");
         } else {
             nebel_app_set_status(app, "JPEG export failed");
+        }
+    }
+    if (take_pending(g_pending_save_png16, path)) {
+        if (nebel_app_export_png16(app, path)) {
+            nebel_app_queue_audio(app, "assets/sounds/export_shutter.wav", 0.55f);
+            nebel_app_set_status(app, "Exported 16-bit lossless PNG");
+        } else {
+            nebel_app_set_status(app, "16-bit PNG export failed");
+        }
+    }
+    if (take_pending(g_pending_save_tiff16, path)) {
+        if (nebel_app_export_tiff16(app, path)) {
+            nebel_app_queue_audio(app, "assets/sounds/export_shutter.wav", 0.55f);
+            nebel_app_set_status(app, "Exported 16-bit print TIFF");
+        } else {
+            nebel_app_set_status(app, "16-bit TIFF export failed");
         }
     }
 }

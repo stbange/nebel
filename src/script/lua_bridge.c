@@ -147,6 +147,14 @@ static int l_brush_set_softness(lua_State *L) {
     nebel_brush_clamp(&app->brush);
     return 0;
 }
+static int l_brush_get_auto_depth(lua_State *L) {
+    lua_pushboolean(L, get_app(L)->auto_depth_brush);
+    return 1;
+}
+static int l_brush_set_auto_depth(lua_State *L) {
+    get_app(L)->auto_depth_brush = lua_toboolean(L, 1) != 0;
+    return 0;
+}
 static int l_brush_stroke_begin(lua_State *L) {
     nebel_app_stroke_begin(get_app(L), (float)luaL_checknumber(L, 1), (float)luaL_checknumber(L, 2));
     return 0;
@@ -228,6 +236,8 @@ static int l_io_export_jpg(lua_State *L) {
     app->req_jpg_quality = (int)luaL_optinteger(L, 1, 92);
     return 0;
 }
+static int l_io_export_png16(lua_State *L) { get_app(L)->req_export_png16 = true; return 0; }
+static int l_io_export_tiff16(lua_State *L) { get_app(L)->req_export_tiff16 = true; return 0; }
 static int l_io_reload_scripts(lua_State *L) { get_app(L)->req_reload_scripts = true; return 0; }
 static int l_io_load_sample(lua_State *L) {
     NebelAppState *app = get_app(L);
@@ -341,6 +351,7 @@ static void register_api(lua_State *L) {
         {"get_radius", l_brush_get_radius}, {"set_radius", l_brush_set_radius},
         {"get_opacity", l_brush_get_opacity}, {"set_opacity", l_brush_set_opacity},
         {"get_softness", l_brush_get_softness}, {"set_softness", l_brush_set_softness},
+        {"get_auto_depth", l_brush_get_auto_depth}, {"set_auto_depth", l_brush_set_auto_depth},
         {"stroke_begin", l_brush_stroke_begin}, {"stroke_move", l_brush_stroke_move},
         {"stroke_end", l_brush_stroke_end}, {NULL, NULL}
     };
@@ -358,6 +369,7 @@ static void register_api(lua_State *L) {
     static const luaL_Reg io_fn[] = {
         {"open_photo", l_io_open_photo}, {"load_sample", l_io_load_sample},
         {"export_png", l_io_export_png}, {"export_jpg", l_io_export_jpg},
+        {"export_png16", l_io_export_png16}, {"export_tiff16", l_io_export_tiff16},
         {"reload_scripts", l_io_reload_scripts}, {NULL, NULL}
     };
     static const luaL_Reg ui_fn[] = {

@@ -34,6 +34,7 @@ typedef struct {
 
 static const char *map_key_name(SDL_Keycode key) {
     switch (key) {
+    case SDLK_A: return "A";
     case SDLK_B: return "B";
     case SDLK_D: return "D";
     case SDLK_E: return "E";
