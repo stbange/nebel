@@ -108,8 +108,10 @@
 
   window.nebelWebDownloadFile = function (ptr, len, filename, mime) {
     const mod = window.Module;
-    if (!mod || !ptr || len <= 0) return;
-    const copy = new Uint8Array(mod.HEAPU8.buffer, ptr, len).slice();
+    const uptr = ptr >>> 0;
+    const ulen = len >>> 0;
+    if (!mod || !uptr || !ulen) return;
+    const copy = new Uint8Array(mod.HEAPU8.buffer, uptr, ulen).slice();
     const blob = new Blob([copy], { type: mime || "application/octet-stream" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");

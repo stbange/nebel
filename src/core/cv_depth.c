@@ -208,9 +208,9 @@ bool nebel_depth_estimate_classical(const NebelImage *img, float horizon_y, floa
     if (rad < 2) rad = 2;
     if (rad > 16) rad = 16;
 
-    box_filter(sharp, raw, w, h, rad);
+    if (!box_filter(sharp, raw, w, h, rad)) { free(luma); return false; }
     for (size_t i = 0; i < n; i++) sharp[i] = raw[i];
-    box_filter(dark, raw, w, h, rad);
+    if (!box_filter(dark, raw, w, h, rad)) { free(luma); return false; }
     for (size_t i = 0; i < n; i++) dark[i] = raw[i];
 
     /* 2. Fuse aerial haze + local sharpness + horizon plane, keeping dark crisp silhouettes near */

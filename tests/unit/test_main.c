@@ -368,6 +368,22 @@ static void test_brush_and_fog_module(void) {
     CHECK(out_rays.rgba[valley_px] > out_norays.rgba[valley_px] + 0.05f);
     CHECK_NEAR(out_rays.rgba[fg_occ_px], out_norays.rgba[fg_occ_px], 1e-4f);
 
+    /* High-res export (128x96) with work-res mask (64x48): unpainted top half has zero fog bleed */
+    NebelImage hires = make_synthetic_scene(128, 96);
+    NebelFogLayer hlayer;
+    CHECK(nebel_fog_layer_init(&hlayer, "HiRes", 64, 48));
+    for (int y = 32; y < 48; y++) memset(&hlayer.mask[y * 64], 220, 64);
+    hlayer.params.depth_min = 0.0f; hlayer.params.bloom_amount = 0.5f; hlayer.params.edge_refine = 0.9f;
+    NebelImage hires_out = {0};
+    CHECK(nebel_fog_render_cpu(&hires, ray_depth, 64, 48, NULL, 0, 0, &hlayer, 1, 0.0f, &hires_out));
+    for (int y = 0; y < 40; y++) {
+        size_t i = ((size_t)y * 128u + 64u) * 4u;
+        CHECK_NEAR(hires_out.rgba[i], hires.rgba[i], 1e-5f);
+    }
+    nebel_fog_layer_free(&hlayer);
+    nebel_image_free(&hires);
+    nebel_image_free(&hires_out);
+
     nebel_fog_layer_free(&pl);
     nebel_image_free(&pool_img);
     nebel_image_free(&ray_img);

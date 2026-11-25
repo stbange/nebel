@@ -338,11 +338,9 @@ static void sync_gpu_textures(NebelRenderer *r, NebelAppState *app) {
                     raw[i] = m * (1.0f - pr);
                 }
                 float er = layer->params.edge_refine;
-                if (er > 0.01f) {
-                    nebel_guided_filter(luma, raw, ref, w, h, rad, 0.0015f);
-                }
+                bool gf_ok = (er > 0.01f) && nebel_guided_filter(luma, raw, ref, w, h, rad, 0.0015f);
                 for (size_t i = 0; i < n; i++) {
-                    float v = er > 0.01f ? (raw[i] * (1.0f - er) + ref[i] * er) : raw[i];
+                    float v = gf_ok ? (raw[i] * (1.0f - er) + ref[i] * er) : raw[i];
                     if (v < 0.0f) v = 0.0f;
                     if (v > 1.0f) v = 1.0f;
                     m8[i] = (uint8_t)(v * 255.0f + 0.5f);

@@ -179,6 +179,43 @@ static float sample_f32_bilinear(const float *buf, int w, int h, float u, float 
     return (a + (b - a) * fx) * (1.0f - fy) + (c + (d - c) * fx) * fy;
 }
 
+static void sample_rgb_bilinear(const float *buf, int w, int h, float u, float v, float out[3]) {
+    float sx = clampf(u, 0.0f, 1.0f) * (float)(w - 1);
+    float sy = clampf(v, 0.0f, 1.0f) * (float)(h - 1);
+    int x0 = (int)floorf(sx);
+    int y0 = (int)floorf(sy);
+    int x1 = x0 + 1 < w ? x0 + 1 : w - 1;
+    int y1 = y0 + 1 < h ? y0 + 1 : h - 1;
+    float fx = sx - (float)x0;
+    float fy = sy - (float)y0;
+    const float *p00 = &buf[((size_t)y0 * (size_t)w + (size_t)x0) * 3u];
+    const float *p10 = &buf[((size_t)y0 * (size_t)w + (size_t)x1) * 3u];
+    const float *p01 = &buf[((size_t)y1 * (size_t)w + (size_t)x0) * 3u];
+    const float *p11 = &buf[((size_t)y1 * (size_t)w + (size_t)x1) * 3u];
+    for (int c = 0; c < 3; c++) {
+        float top = p00[c] + (p10[c] - p00[c]) * fx;
+        float bot = p01[c] + (p11[c] - p01[c]) * fx;
+        out[c] = top + (bot - top) * fy;
+    }
+}
+
+static void scaled_dims(int w, int h, int div, int max_dim, int *ow, int *oh) {
+    int dw = w / div;
+    int dh = h / div;
+    if (dw < 1) dw = 1;
+    if (dh < 1) dh = 1;
+    int mx = dw > dh ? dw : dh;
+    if (mx > max_dim) {
+        float s = (float)max_dim / (float)mx;
+        dw = (int)((float)dw * s + 0.5f);
+        dh = (int)((float)dh * s + 0.5f);
+        if (dw < 1) dw = 1;
+        if (dh < 1) dh = 1;
+    }
+    *ow = dw;
+    *oh = dh;
+}
+
 static void separable_box_blur_rgb(float *rgb, int w, int h, int radius) {
     if (radius <= 0) return;
     float *tmp = (float *)malloc((size_t)w * (size_t)h * 3u * sizeof(float));
@@ -288,38 +325,38 @@ bool nebel_fog_render_cpu(const NebelImage *src,
     int h = src->height;
     size_t n = (size_t)w * (size_t)h;
 
-    float *luma = (float *)malloc(n * 4u * sizeof(float));
-    float *bloom_buf = (float *)malloc(n * 3u * sizeof(float));
-    float *amb_buf = (float *)malloc(n * 3u * sizeof(float));
-    if (!luma || !bloom_buf || !amb_buf) {
+    int aw = 1, ah = 1;
+    scaled_dims(w, h, 4, 512, &aw, &ah);
+    float *luma = (float *)calloc(n * 2u, sizeof(float));
+    float *amb_buf = (float *)calloc((size_t)aw * (size_t)ah * 3u, sizeof(float));
+    if (!luma || !amb_buf) {
         free(luma);
-        free(bloom_buf);
         free(amb_buf);
         nebel_image_free(out);
         return false;
     }
-    float *raw_mask = luma + n;
-    float *ref_mask = luma + 2u * n;
-    float *fog_accum = luma + 3u * n;
+    float *fog_accum = luma + n;
 
     for (size_t i = 0; i < n; i++) {
         const float *p = &src->rgba[i * 4u];
         luma[i] = clampf(0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2], 0.0f, 1.0f);
-        amb_buf[i * 3 + 0] = p[0];
-        amb_buf[i * 3 + 1] = p[1];
-        amb_buf[i * 3 + 2] = p[2];
-        fog_accum[i] = 0.0f;
     }
 
-    int arad = (w < h ? w : h) / 16;
+    /* Quarter-res (<=512px) wide scene ambient light map matching GPU tex_amb */
+    for (int y = 0; y < ah; y++) {
+        int sy = ah > 1 ? (int)((size_t)y * (size_t)(h - 1) / (size_t)(ah - 1)) : 0;
+        for (int x = 0; x < aw; x++) {
+            int sx = aw > 1 ? (int)((size_t)x * (size_t)(w - 1) / (size_t)(aw - 1)) : 0;
+            const float *p = &src->rgba[((size_t)sy * (size_t)w + (size_t)sx) * 4u];
+            float *d = &amb_buf[((size_t)y * (size_t)aw + (size_t)x) * 3u];
+            d[0] = p[0]; d[1] = p[1]; d[2] = p[2];
+        }
+    }
+    int arad = (aw < ah ? aw : ah) / 4;
     if (arad < 2) arad = 2;
-    if (arad > 32) arad = 32;
-    separable_box_blur_rgb(amb_buf, w, h, arad);
-    separable_box_blur_rgb(amb_buf, w, h, arad);
-
-    int gf_rad = (w < h ? w : h) / 64;
-    if (gf_rad < 2) gf_rad = 2;
-    if (gf_rad > 12) gf_rad = 12;
+    if (arad > 16) arad = 16;
+    separable_box_blur_rgb(amb_buf, aw, ah, arad);
+    separable_box_blur_rgb(amb_buf, aw, ah, arad);
 
     float max_bloom = 0.0f;
     float max_grain = 0.0f;
@@ -342,19 +379,43 @@ bool nebel_fog_render_cpu(const NebelImage *src,
             rays_sun_y = p.sun_y;
         }
 
-        /* Combine painted fog mask minus foreground-protect mask, then edge-refine */
-        for (int y = 0; y < h; y++) {
-            float v = h > 1 ? (float)y / (float)(h - 1) : 0.0f;
-            for (int x = 0; x < w; x++) {
-                float u = w > 1 ? (float)x / (float)(w - 1) : 0.0f;
+        /* Refine fog mask at work/mask resolution (<=2048px, matching GPU) so 20-45MP exports never OOM */
+        int mw = layer->mask_w < w ? layer->mask_w : w;
+        int mh = layer->mask_h < h ? layer->mask_h : h;
+        scaled_dims(mw, mh, 1, 2048, &mw, &mh);
+        size_t mn = (size_t)mw * (size_t)mh;
+        float *mask_work = (float *)calloc(mn * 3u, sizeof(float));
+        if (!mask_work) {
+            free(luma);
+            free(amb_buf);
+            nebel_image_free(out);
+            return false;
+        }
+        float *mluma = mask_work;
+        float *mraw  = mask_work + mn;
+        float *mref  = mask_work + 2u * mn;
+
+        for (int y = 0; y < mh; y++) {
+            float v = mh > 1 ? (float)y / (float)(mh - 1) : 0.0f;
+            int sy = mh > 1 ? (int)((size_t)y * (size_t)(h - 1) / (size_t)(mh - 1)) : 0;
+            for (int x = 0; x < mw; x++) {
+                float u = mw > 1 ? (float)x / (float)(mw - 1) : 0.0f;
+                int sx = mw > 1 ? (int)((size_t)x * (size_t)(w - 1) / (size_t)(mw - 1)) : 0;
+                size_t midx = (size_t)y * (size_t)mw + (size_t)x;
+                mluma[midx] = luma[(size_t)sy * (size_t)w + (size_t)sx];
                 float m = sample_u8_bilinear(layer->mask, layer->mask_w, layer->mask_h, u, v);
                 float prot = protect_mask ? sample_u8_bilinear(protect_mask, protect_w, protect_h, u, v) : 0.0f;
-                raw_mask[(size_t)y * (size_t)w + (size_t)x] = clampf(m * (1.0f - prot), 0.0f, 1.0f);
+                mraw[midx] = clampf(m * (1.0f - prot), 0.0f, 1.0f);
             }
         }
 
-        if (p.edge_refine > 0.01f) {
-            nebel_guided_filter(luma, raw_mask, ref_mask, w, h, gf_rad, 0.0015f);
+        int gf_rad = (mw < mh ? mw : mh) / 64;
+        if (gf_rad < 2) gf_rad = 2;
+        if (gf_rad > 10) gf_rad = 10;
+        if (p.edge_refine > 0.01f && nebel_guided_filter(mluma, mraw, mref, mw, mh, gf_rad, 0.0015f)) {
+            for (size_t i = 0; i < mn; i++) {
+                mraw[i] = clampf(mraw[i] * (1.0f - p.edge_refine) + mref[i] * p.edge_refine, 0.0f, 1.0f);
+            }
         }
 
         for (int y = 0; y < h; y++) {
@@ -363,9 +424,7 @@ bool nebel_fog_render_cpu(const NebelImage *src,
                 float u = w > 1 ? (float)x / (float)(w - 1) : 0.0f;
                 size_t idx = (size_t)y * (size_t)w + (size_t)x;
 
-                float m = p.edge_refine > 0.01f
-                    ? (raw_mask[idx] * (1.0f - p.edge_refine) + ref_mask[idx] * p.edge_refine)
-                    : raw_mask[idx];
+                float m = (mw == w && mh == h) ? mraw[idx] : sample_f32_bilinear(mraw, mw, mh, u, v);
                 if (m <= 1e-4f) continue;
 
                 float d = depth_map ? sample_f32_bilinear(depth_map, depth_w, depth_h, u, v) : 0.65f;
@@ -402,7 +461,8 @@ bool nebel_fog_render_cpu(const NebelImage *src,
                 float opacity = 1.0f - trans;
                 fog_accum[idx] = clampf(fog_accum[idx] + opacity * (1.0f - fog_accum[idx]), 0.0f, 1.0f);
 
-                const float *amb = &amb_buf[idx * 3u];
+                float amb[3];
+                sample_rgb_bilinear(amb_buf, aw, ah, u, v, amb);
                 float amb_lum = clampf(0.2126f * amb[0] + 0.7152f * amb[1] + 0.0722f * amb[2], 0.0f, 1.0f);
                 float s_lum = sqrtf(amb_lum);
 
@@ -423,33 +483,52 @@ bool nebel_fog_render_cpu(const NebelImage *src,
                 }
             }
         }
+        free(mask_work);
     }
 
     free(amb_buf);
 
-    /* Highlight veiling glare / bloom weighted by accumulated fog opacity */
+    /* Half-res (<=1024px) highlight veiling glare / bloom weighted by accumulated fog opacity */
     if (max_bloom > 1e-3f) {
-        for (size_t i = 0; i < n; i++) {
-            const float *p = &src->rgba[i * 4u];
-            float lum = luma[i];
-            float hi = smoothstepf(0.45f, 1.0f, lum);
-            bloom_buf[i * 3 + 0] = p[0] * hi;
-            bloom_buf[i * 3 + 1] = p[1] * hi;
-            bloom_buf[i * 3 + 2] = p[2] * hi;
-        }
-        int brad = (w < h ? w : h) / 28;
-        if (brad < 2) brad = 2;
-        if (brad > 24) brad = 24;
-        separable_box_blur_rgb(bloom_buf, w, h, brad);
-        separable_box_blur_rgb(bloom_buf, w, h, brad);
+        int bw = 1, bh = 1;
+        scaled_dims(w, h, 2, 1024, &bw, &bh);
+        float *bloom_buf = (float *)calloc((size_t)bw * (size_t)bh * 3u, sizeof(float));
+        if (bloom_buf) {
+            for (int y = 0; y < bh; y++) {
+                int sy = bh > 1 ? (int)((size_t)y * (size_t)(h - 1) / (size_t)(bh - 1)) : 0;
+                for (int x = 0; x < bw; x++) {
+                    int sx = bw > 1 ? (int)((size_t)x * (size_t)(w - 1) / (size_t)(bw - 1)) : 0;
+                    size_t si = (size_t)sy * (size_t)w + (size_t)sx;
+                    const float *p = &src->rgba[si * 4u];
+                    float hi = smoothstepf(0.45f, 1.0f, luma[si]);
+                    float *d = &bloom_buf[((size_t)y * (size_t)bw + (size_t)x) * 3u];
+                    d[0] = p[0] * hi;
+                    d[1] = p[1] * hi;
+                    d[2] = p[2] * hi;
+                }
+            }
+            int brad = (bw < bh ? bw : bh) / 14;
+            if (brad < 2) brad = 2;
+            if (brad > 20) brad = 20;
+            separable_box_blur_rgb(bloom_buf, bw, bh, brad);
+            separable_box_blur_rgb(bloom_buf, bw, bh, brad);
 
-        for (size_t i = 0; i < n; i++) {
-            float f = fog_accum[i] * max_bloom;
-            if (f <= 1e-4f) continue;
-            float *px = &out->rgba[i * 4u];
-            px[0] = clampf(px[0] + bloom_buf[i * 3 + 0] * f * 0.75f, 0.0f, 1.0f);
-            px[1] = clampf(px[1] + bloom_buf[i * 3 + 1] * f * 0.75f, 0.0f, 1.0f);
-            px[2] = clampf(px[2] + bloom_buf[i * 3 + 2] * f * 0.75f, 0.0f, 1.0f);
+            for (int y = 0; y < h; y++) {
+                float v = h > 1 ? (float)y / (float)(h - 1) : 0.0f;
+                for (int x = 0; x < w; x++) {
+                    size_t idx = (size_t)y * (size_t)w + (size_t)x;
+                    float f = fog_accum[idx] * max_bloom;
+                    if (f <= 1e-4f) continue;
+                    float u = w > 1 ? (float)x / (float)(w - 1) : 0.0f;
+                    float bl[3];
+                    sample_rgb_bilinear(bloom_buf, bw, bh, u, v, bl);
+                    float *px = &out->rgba[idx * 4u];
+                    px[0] = clampf(px[0] + bl[0] * f * 0.75f, 0.0f, 1.0f);
+                    px[1] = clampf(px[1] + bl[1] * f * 0.75f, 0.0f, 1.0f);
+                    px[2] = clampf(px[2] + bl[2] * f * 0.75f, 0.0f, 1.0f);
+                }
+            }
+            free(bloom_buf);
         }
     }
 
@@ -516,6 +595,5 @@ bool nebel_fog_render_cpu(const NebelImage *src,
     }
 
     free(luma);
-    free(bloom_buf);
     return true;
 }
