@@ -297,6 +297,13 @@ int main(int argc, char **argv) {
         SDL_Quit();
         return 1;
     }
+#if defined(__EMSCRIPTEN__)
+    {
+        EMSCRIPTEN_WEBGL_CONTEXT_HANDLE wctx = emscripten_webgl_get_current_context();
+        emscripten_webgl_enable_extension(wctx, "EXT_color_buffer_float");
+        emscripten_webgl_enable_extension(wctx, "EXT_color_buffer_half_float");
+    }
+#endif
     SDL_GL_SetSwapInterval(1);
 
     /* Resolve loose external assets/ and scripts/ directory beside binary */

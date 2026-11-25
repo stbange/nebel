@@ -338,6 +338,17 @@ static void test_brush_and_fog_module(void) {
     nebel_image_free(&out_nopool);
     nebel_image_free(&out_pool);
 
+    /* GPU/CPU parity: noise_seed modulo 10000 produces identical volumetric fBm output */
+    NebelImage out_s1 = {0}, out_s2 = {0};
+    pl.params.noise_amount = 0.8f;
+    pl.params.noise_seed = 42317u;
+    CHECK(nebel_fog_render_cpu(&pool_img, pool_depth, 64, 48, NULL, 0, 0, &pl, 1, 0.0f, &out_s1));
+    pl.params.noise_seed = 2317u;
+    CHECK(nebel_fog_render_cpu(&pool_img, pool_depth, 64, 48, NULL, 0, 0, &pl, 1, 0.0f, &out_s2));
+    CHECK(memcmp(out_s1.rgba, out_s2.rgba, 64u * 48u * 4u * sizeof(float)) == 0);
+    nebel_image_free(&out_s1);
+    nebel_image_free(&out_s2);
+
     /* Crepuscular sunbeams: warm light shafts brighten fogged background while foreground stays protected */
     NebelImage ray_img = {0};
     CHECK(nebel_image_alloc(&ray_img, 64, 48));
@@ -630,6 +641,9 @@ static void test_app_and_lua_bridge(void) {
     CHECK(nebel_image_encode_png_mem(&app.orig_img, &enc_png, &enc_len));
     CHECK(nebel_app_load_image_mem(&app, enc_png, enc_len));
     free(enc_png);
+    app.dirty_masks_gpu = false;
+    CHECK(nebel_app_set_layer_param(&app, 0, "edge_refine", 0.6f));
+    CHECK(app.dirty_masks_gpu);
     CHECK(nebel_app_compute_classical_depth(&app));
 
     /* Undo/redo across adding and removing a second fog layer */

@@ -28,7 +28,7 @@ static char *read_text_file(const char *path) {
 
 static GLuint compile_shader(GLenum type, const char *body, const char *label) {
 #if defined(__EMSCRIPTEN__)
-    const char *preamble = "#version 300 es\nprecision highp float;\n";
+    const char *preamble = "#version 300 es\nprecision highp float;\nprecision highp int;\n";
 #else
     const char *preamble = "#version 330 core\n";
 #endif
@@ -495,7 +495,7 @@ void nebel_renderer_draw(NebelRenderer *r, NebelAppState *app,
             glUniform1f(glGetUniformLocation(r->prog_fog, "u_noise_scale"), p->noise_scale);
             glUniform1f(glGetUniformLocation(r->prog_fog, "u_noise_amount"), p->noise_amount);
             glUniform1f(glGetUniformLocation(r->prog_fog, "u_shadow_pool"), p->shadow_pool);
-            glUniform1f(glGetUniformLocation(r->prog_fog, "u_seed"), (float)(p->noise_seed % 10000u));
+            glUniform1i(glGetUniformLocation(r->prog_fog, "u_seed"), (int)(p->noise_seed % 10000u));
 
             /* Render into FBO preserving row-0 = top-of-image UV orientation */
             draw_quad(r->prog_fog, 0, 0, (float)w, (float)h, (float)w, (float)h, 0, 1, 1, 0);

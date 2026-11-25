@@ -18,39 +18,48 @@ uniform float u_sun_g;
 uniform float u_noise_scale;
 uniform float u_noise_amount;
 uniform float u_shadow_pool;
-uniform float u_seed;
+uniform int   u_seed;
 
-float hash21(vec2 p, float seed) {
-    vec3 p3 = fract(vec3(p.xyx) * 0.1031 + seed * 0.00137);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
+uint hash_u32(uint x) {
+    x ^= x >> 16u;
+    x *= 0x7feb352du;
+    x ^= x >> 15u;
+    x *= 0x846ca68bu;
+    x ^= x >> 16u;
+    return x;
 }
 
-float value_noise(vec2 p, float seed) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
+float hash2d(ivec2 ip, uint seed) {
+    uint h = hash_u32(uint(ip.x) * 374761393u + uint(ip.y) * 668265263u + seed * 1442695041u);
+    return float(h & 0x00FFFFFFu) / 16777215.0;
+}
+
+float value_noise(vec2 p, uint seed) {
+    vec2 fl = floor(p);
+    ivec2 i = ivec2(fl);
+    vec2 f = p - fl;
     vec2 u = f * f * (3.0 - 2.0 * f);
-    float a = hash21(i, seed);
-    float b = hash21(i + vec2(1.0, 0.0), seed);
-    float c = hash21(i + vec2(0.0, 1.0), seed);
-    float d = hash21(i + vec2(1.0, 1.0), seed);
+    float a = hash2d(i,                seed);
+    float b = hash2d(i + ivec2(1, 0),  seed);
+    float c = hash2d(i + ivec2(0, 1),  seed);
+    float d = hash2d(i + ivec2(1, 1),  seed);
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-float fbm(vec2 p, float seed) {
+float fbm(vec2 p, uint seed) {
     float val = 0.0;
     float amp = 0.5;
     float freq = 1.0;
     for (int i = 0; i < 4; i++) {
-        val += amp * value_noise(p * freq, seed + float(i) * 19.3);
-        freq *= 2.02;
+        val += amp * value_noise(p * freq, seed + uint(i) * 97u);
+        freq *= 2.03;
         amp *= 0.5;
     }
     return clamp(val, 0.0, 1.0);
 }
 
 /* Remap narrow fBm [0.28, 0.72] -> [0, 1] for genuine patchy clearings and soft cloud banks */
-float fbm_wide(vec2 p, float seed) {
+float fbm_wide(vec2 p, uint seed) {
     return clamp((fbm(p, seed) - 0.28) / 0.44, 0.0, 1.0);
 }
 
@@ -63,19 +72,20 @@ float henyey_greenstein(float cos_theta, float g) {
 }
 
 /* Soft billowy stratified fog sheet at FIXED world-space depth plane z (zero depth-contour distortion) */
-float fog_sheet_density(vec2 uv, float z, float seed) {
+float fog_sheet_density(vec2 uv, float z, uint seed) {
     float persp = 0.35 + (1.0 - z) * 0.95;
+    float s_f = float(seed % 10000u);
     /* Gently stratified horizontal mist banks (~1.7x wider than tall) */
     vec2 p = vec2((uv.x - 0.5) / persp * 0.78, (uv.y - u_horizon_y) / persp * 1.35);
-    p = p * (u_noise_scale * 0.52) + vec2(seed * 0.13, -seed * 0.09);
+    p = p * (u_noise_scale * 0.52) + vec2(s_f * 0.13, -s_f * 0.09);
 
     /* Subtle low-frequency drift warp keeps clouds silky without marbled creases */
     float qx = fbm_wide(p * 0.65, seed) - 0.5;
-    float qy = fbm_wide(p * 0.65 + vec2(4.7, 1.9), seed + 17.0) - 0.5;
+    float qy = fbm_wide(p * 0.65 + vec2(4.7, 1.9), seed + 17u) - 0.5;
     vec2 warped = p + vec2(qx * 0.85, qy * 0.45) * u_noise_amount;
 
-    float macro = fbm_wide(warped * 0.82, seed + 31.0);
-    float detail = fbm_wide(warped * 1.85, seed + 67.0);
+    float macro = fbm_wide(warped * 0.82, seed + 31u);
+    float detail = fbm_wide(warped * 1.85, seed + 67u);
     float cloud = clamp(macro * 0.72 + detail * 0.28, 0.0, 1.0);
 
     float patchy = smoothstep(0.16 * u_noise_amount, 0.92 - 0.06 * u_noise_amount, cloud);
@@ -113,13 +123,14 @@ void main() {
     float d_span = max(0.08, u_depth_max - u_depth_min);
     float slice_tau = 0.0;
     float macro_ref = 0.0;
+    uint base_seed = uint(max(u_seed, 0));
     for (int s = 0; s < 5; s++) {
         float frac = (float(s) + 0.5) / 5.0;
         float z_s = u_depth_min + d_span * frac;
         /* Only integrate fog planes that physically lie IN FRONT of this pixel's surface d */
         float in_front = smoothstep(z_s - 0.065, z_s + 0.055, d);
         if (in_front <= 0.0005) continue;
-        float sheet = fog_sheet_density(v_uv, z_s, u_seed + float(s) * 29.0);
+        float sheet = fog_sheet_density(v_uv, z_s, base_seed + uint(s) * 29u);
         float weight = (0.75 + 0.50 * frac) * 0.22;
         slice_tau += sheet * in_front * weight;
         macro_ref = max(macro_ref, sheet * in_front);

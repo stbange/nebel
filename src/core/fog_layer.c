@@ -352,9 +352,9 @@ bool nebel_fog_render_cpu(const NebelImage *src,
             d[0] = p[0]; d[1] = p[1]; d[2] = p[2];
         }
     }
-    int arad = (aw < ah ? aw : ah) / 4;
+    int arad = (aw < ah ? aw : ah) / 14;
     if (arad < 2) arad = 2;
-    if (arad > 16) arad = 16;
+    if (arad > 12) arad = 12;
     separable_box_blur_rgb(amb_buf, aw, ah, arad);
     separable_box_blur_rgb(amb_buf, aw, ah, arad);
 
@@ -418,6 +418,7 @@ bool nebel_fog_render_cpu(const NebelImage *src,
             }
         }
 
+        uint32_t base_seed = p.noise_seed % 10000u;
         for (int y = 0; y < h; y++) {
             float v = h > 1 ? (float)y / (float)(h - 1) : 0.0f;
             for (int x = 0; x < w; x++) {
@@ -443,7 +444,7 @@ bool nebel_fog_render_cpu(const NebelImage *src,
                     float z_s = p.depth_min + d_span * frac;
                     float in_front = smoothstepf(z_s - 0.065f, z_s + 0.055f, d);
                     if (in_front <= 1e-4f) continue;
-                    float sheet = fog_sheet_density(u, v, z_s, &p, p.noise_seed + (uint32_t)s * 29u);
+                    float sheet = fog_sheet_density(u, v, z_s, &p, base_seed + (uint32_t)s * 29u);
                     float weight = (0.75f + 0.50f * frac) * 0.22f;
                     slice_tau += sheet * in_front * weight;
                     if (sheet * in_front > macro_ref) macro_ref = sheet * in_front;
@@ -452,8 +453,10 @@ bool nebel_fog_render_cpu(const NebelImage *src,
                 float edge_m = smoothstepf(0.04f, 0.90f, m + (macro_ref - 0.50f) * p.noise_amount * 0.65f);
                 float m_org = m * (1.0f - p.noise_amount) + (m * (0.25f + 1.05f * edge_m)) * p.noise_amount;
 
-                /* Shadow / trough pooling bias: mist gathers thicker in dark cool hollows */
-                float darkness = 1.0f - smoothstepf(0.06f, 0.78f, sqrtf(luma[idx]));
+                /* Shadow / trough pooling bias: matches GPU prev.rgb luminance on single and multi-layer fog */
+                float *px = &out->rgba[idx * 4u];
+                float px_lum = clampf(0.2126f * px[0] + 0.7152f * px[1] + 0.0722f * px[2], 0.0f, 1.5f);
+                float darkness = 1.0f - smoothstepf(0.06f, 0.78f, sqrtf(px_lum));
                 float pool_factor = (1.0f - p.shadow_pool) + (0.35f + 1.15f * darkness) * p.shadow_pool;
 
                 float tau = p.density * m_org * d_enter * d_exit * slice_tau * pool_factor;
@@ -473,7 +476,6 @@ bool nebel_fog_render_cpu(const NebelImage *src,
                 float sun_phase = nebel_henyey_greenstein(cos_theta, p.sun_anisotropy);
                 float sun_boost = p.sun_strength * sun_phase * (0.35f + 0.65f * s_lum);
 
-                float *px = &out->rgba[idx * 4u];
                 for (int c = 0; c < 3; c++) {
                     float warm = (c == 0) ? 1.15f : ((c == 1) ? 1.02f : 0.84f);
                     float lit = p.airlight[c] * (0.40f + 1.12f * s_lum) + amb[c] * 0.28f;
@@ -507,9 +509,9 @@ bool nebel_fog_render_cpu(const NebelImage *src,
                     d[2] = p[2] * hi;
                 }
             }
-            int brad = (bw < bh ? bw : bh) / 14;
+            int brad = (bw < bh ? bw : bh) / 36;
             if (brad < 2) brad = 2;
-            if (brad > 20) brad = 20;
+            if (brad > 10) brad = 10;
             separable_box_blur_rgb(bloom_buf, bw, bh, brad);
             separable_box_blur_rgb(bloom_buf, bw, bh, brad);
 

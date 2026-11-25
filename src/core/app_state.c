@@ -204,7 +204,10 @@ bool nebel_app_set_layer_param(NebelAppState *app, int index, const char *key, f
     else if (strcmp(key, "god_rays") == 0) p->god_rays = value;
     else if (strcmp(key, "shadow_pool") == 0) p->shadow_pool = value;
     else if (strcmp(key, "grain_match") == 0) p->grain_match = value;
-    else if (strcmp(key, "edge_refine") == 0) p->edge_refine = value;
+    else if (strcmp(key, "edge_refine") == 0) {
+        p->edge_refine = value;
+        app->dirty_masks_gpu = true;
+    }
     else if (strcmp(key, "noise_seed") == 0) p->noise_seed = (uint32_t)(value > 0.0f ? value : 1.0f);
     else if (strcmp(key, "visible") == 0) p->visible = (value >= 0.5f);
     else return false;
