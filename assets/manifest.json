@@ -1,0 +1,21 @@
+{
+  "files": [
+    "scripts/main.lua",
+    "scripts/ui.lua",
+    "scripts/tools.lua",
+    "scripts/presets.lua",
+    "scripts/pipeline.lua",
+    "assets/shaders/quad.vert",
+    "assets/shaders/fog_layer.frag",
+    "assets/shaders/bloom.frag",
+    "assets/shaders/composite.frag",
+    "assets/shaders/ui.frag",
+    "assets/fonts/DejaVuSans.ttf",
+    "assets/icons/icons_atlas.png",
+    "assets/sounds/ui_click.wav",
+    "assets/sounds/brush_soft.wav",
+    "assets/sounds/export_shutter.wav",
+    "assets/samples/alpine_valley.jpg",
+    "assets/samples/forest_stag.jpg"
+  ]
+}

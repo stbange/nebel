@@ -1,0 +1,13 @@
+build/
+build-*/
+CMakeFiles/
+CMakeCache.txt
+*.o
+*.a
+*.gcno
+*.gcda
+*.gcov
+.DS_Store
+Thumbs.db
+*.user
+assets/models/*.onnx

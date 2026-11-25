@@ -1,0 +1,13 @@
+schema: spec-driven
+
+context: |
+  Nebel is a C11 + SDL3 + OpenGL 3.3 Core / WebGL 2.0 (Emscripten) photographic fog studio with external Lua 5.4 scripts and loose external assets.
+  Targets: Windows, Linux, macOS, Web (Emscripten, with adaptive mobile touch controls).
+  Licenses: MIT for code, CC BY 4.0 for original art/audio/sample assets.
+  Engineering constraints: Ponytail minimalist discipline, >=95% line coverage on src/core/ and src/script/, headless E2E simulation test, single main branch only, GitHub Pages deployed via GitHub Actions.
+
+rules:
+  proposal:
+    - Keep proposals concise and explicitly state out-of-scope items.
+  tasks:
+    - Keep tasks verifiable with explicit test or build checks.

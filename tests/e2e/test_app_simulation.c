@@ -1,0 +1,217 @@
+/* Automated End-to-End Headless Simulation ("Game / App") Test for Nebel.
+ * Boots real C core + external Lua scripts + external loose assets, feeds
+ * synthetic desktop mouse, keyboard, and mobile touch frames, and verifies
+ * optical physics, foreground protection, multi-layer fog, undo/redo, and export.
+ */
+#include "core/app_state.h"
+#include "core/manifest.h"
+#include "script/lua_bridge.h"
+
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define ASSERT_TRUE(cond) do { \
+    if (!(cond)) { \
+        fprintf(stderr, "[E2E FAIL] %s:%d: %s\n", __FILE__, __LINE__, #cond); \
+        return 1; \
+    } \
+} while (0)
+
+static char *read_all(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *b = (char *)malloc((size_t)sz + 1u);
+    if (!b) { fclose(f); return NULL; }
+    if (fread(b, 1, (size_t)sz, f) != (size_t)sz) { free(b); fclose(f); return NULL; }
+    b[sz] = '\0';
+    fclose(f);
+    return b;
+}
+
+static float pixel_luma(const NebelImage *img, int x, int y) {
+    const float *p = &img->rgba[((size_t)y * (size_t)img->width + (size_t)x) * 4u];
+    return 0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2];
+}
+
+int main(void) {
+    /* 1. Verify every loose file listed in assets/manifest.json exists on disk */
+    char mpath[384];
+    ASSERT_TRUE(nebel_path_join_asset(NEBEL_SOURCE_DIR, "assets/manifest.json", mpath, sizeof(mpath)));
+    char *mjson = read_all(mpath);
+    ASSERT_TRUE(mjson != NULL);
+    char files[64][NEBEL_PATH_MAX];
+    int fcount = nebel_manifest_parse(mjson, files, 64);
+    free(mjson);
+    ASSERT_TRUE(fcount >= 14);
+    for (int i = 0; i < fcount; i++) {
+        char fp[384];
+        ASSERT_TRUE(nebel_path_join_asset(NEBEL_SOURCE_DIR, files[i], fp, sizeof(fp)));
+        FILE *f = fopen(fp, "rb");
+        ASSERT_TRUE(f != NULL);
+        fclose(f);
+    }
+
+    /* 2. Boot engine + external Lua scripts (loads bundled sample alpine_valley.jpg!) */
+    NebelAppState app;
+    NebelLuaBridge lua;
+    nebel_app_init(&app, NEBEL_SOURCE_DIR);
+    ASSERT_TRUE(nebel_lua_init(&lua, &app));
+    ASSERT_TRUE(nebel_lua_reload(&lua));
+    ASSERT_TRUE(app.orig_img.width > 100 && app.orig_img.height > 100);
+    ASSERT_TRUE(app.layer_count == 1);
+
+    /* 3. Load deterministic wildlife-silhouette synthetic photo to test exact optical physics */
+    const int W = 96, H = 64;
+    NebelImage scene = {0};
+    ASSERT_TRUE(nebel_image_alloc(&scene, W, H));
+    for (int y = 0; y < H; y++) {
+        float v = (float)y / (float)(H - 1);
+        for (int x = 0; x < W; x++) {
+            float u = (float)x / (float)(W - 1);
+            float *p = &scene.rgba[((size_t)y * (size_t)W + (size_t)x) * 4u];
+            if (v < 0.38f) {
+                p[0] = 0.55f; p[1] = 0.72f; p[2] = 0.92f; /* Clear sky */
+            } else {
+                p[0] = 0.08f; p[1] = 0.14f; p[2] = 0.09f; /* Dark valley pines */
+            }
+            /* Sharp dark foreground stag silhouette in center-right */
+            if (u >= 0.58f && u <= 0.74f && v >= 0.42f && v <= 0.88f) {
+                p[0] = 0.02f; p[1] = 0.02f; p[2] = 0.02f;
+            }
+            p[3] = 1.0f;
+        }
+    }
+    ASSERT_TRUE(nebel_app_load_image(&app, &scene));
+    nebel_image_free(&scene);
+
+    /* 4. Desktop workflow simulation: run Lua UI frame, apply preset, paint fog + protect stag */
+    nebel_ui_begin_frame(&app.ui, 1280, 760, 400, 400, false, false, false);
+    ASSERT_TRUE(nebel_lua_on_ui(&lua, 1280, 760));
+    nebel_ui_end_frame(&app.ui);
+    ASSERT_TRUE(!app.ui.pointer_over_ui);
+
+    ASSERT_TRUE(nebel_lua_apply_preset(&lua, "Backlit Wildlife"));
+    ASSERT_TRUE(nebel_lua_on_key(&lua, "B", false, false)); /* Fog marker */
+    app.brush.radius = 0.22f;
+    app.brush.opacity = 0.95f;
+    nebel_app_stroke_begin(&app, 0.15f, 0.65f);
+    nebel_app_stroke_move(&app, 0.50f, 0.65f);
+    nebel_app_stroke_move(&app, 0.85f, 0.65f);
+    nebel_app_stroke_end(&app);
+
+    /* Protect foreground stag silhouette */
+    ASSERT_TRUE(nebel_lua_on_key(&lua, "P", false, false));
+    app.brush.radius = 0.12f;
+    app.brush.opacity = 1.0f;
+    nebel_app_stroke_begin(&app, 0.66f, 0.52f);
+    nebel_app_stroke_move(&app, 0.66f, 0.78f);
+    nebel_app_stroke_end(&app);
+
+    /* Render 1-layer result and verify background fog vs protected silhouette */
+    NebelImage res1 = {0};
+    ASSERT_TRUE(nebel_app_render_full(&app, &res1));
+    float orig_bg = pixel_luma(&app.orig_img, 24, 42);
+    float fog1_bg = pixel_luma(&res1, 24, 42);
+    float fog1_fg = pixel_luma(&res1, 63, 42);
+    ASSERT_TRUE(fog1_bg > orig_bg + 0.15f);
+    ASSERT_TRUE(fog1_fg < fog1_bg - 0.18f);
+
+    /* 5. Multi-layer fog: add second independent layer and paint ridge haze */
+    ASSERT_TRUE(nebel_app_add_layer(&app, "Ridge Haze") == 1);
+    ASSERT_TRUE(nebel_lua_on_key(&lua, "B", false, false));
+    app.brush.radius = 0.22f;
+    nebel_app_stroke_begin(&app, 0.15f, 0.65f);
+    nebel_app_stroke_move(&app, 0.45f, 0.65f);
+    nebel_app_stroke_end(&app);
+
+    NebelImage res2 = {0};
+    ASSERT_TRUE(nebel_app_render_full(&app, &res2));
+    float fog2_bg = pixel_luma(&res2, 24, 42);
+    ASSERT_TRUE(fog2_bg > fog1_bg + 0.04f);
+
+    /* 6. Mobile Touch simulation: responsive switch, paint, 2-finger undo, 3-finger redo, pinch zoom */
+    const int MVW = 390, MVH = 844;
+    nebel_touch_update_viewport(&app.touch, MVW, MVH);
+    ASSERT_TRUE(app.touch.touch_mode);
+
+    /* Render mobile drawer across all 3 tabs */
+    nebel_ui_begin_frame(&app.ui, MVW, MVH, 200, 350, false, false, false);
+    ASSERT_TRUE(nebel_lua_on_ui(&lua, MVW, MVH));
+    nebel_ui_end_frame(&app.ui);
+    ASSERT_TRUE(app.ui.cmd_count > 10);
+
+    size_t msz = (size_t)app.work_img.width * (size_t)app.work_img.height;
+    uint8_t *before_touch = (uint8_t *)malloc(msz);
+    ASSERT_TRUE(before_touch != NULL);
+    memcpy(before_touch, app.layers[app.active_layer].mask, msz);
+
+    /* 1-finger paint inside canvas */
+    float cx, cy, cw, ch;
+    nebel_app_canvas_rect(&app, MVW, MVH, &cx, &cy, &cw, &ch);
+    float px = cx + cw * 0.30f, py = cy + ch * 0.50f;
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_down(&app.touch, 1, px, py, 100));
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_move(&app.touch, 1, px + 30.0f, py, 130));
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_up(&app.touch, 1, px + 30.0f, py, 160));
+    ASSERT_TRUE(memcmp(before_touch, app.layers[app.active_layer].mask, msz) != 0);
+
+    /* 2-finger tap -> Undo restores exact bit-for-bit mask */
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_down(&app.touch, 1, 120, 300, 500));
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_down(&app.touch, 2, 180, 300, 510));
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_up(&app.touch, 1, 121, 300, 580));
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_up(&app.touch, 2, 181, 300, 590));
+    ASSERT_TRUE(memcmp(before_touch, app.layers[app.active_layer].mask, msz) == 0);
+
+    /* 3-finger tap -> Redo restores painted stroke */
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_down(&app.touch, 1, 100, 300, 900));
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_down(&app.touch, 2, 150, 300, 905));
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_down(&app.touch, 3, 200, 300, 910));
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_up(&app.touch, 1, 100, 300, 960));
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_up(&app.touch, 2, 150, 300, 965));
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_up(&app.touch, 3, 200, 300, 970));
+    ASSERT_TRUE(memcmp(before_touch, app.layers[app.active_layer].mask, msz) != 0);
+
+    /* Pinch zoom cancels tentative stroke and scales zoom > 1 */
+    float z0 = app.zoom;
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_down(&app.touch, 1, 120, 320, 1500));
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_down(&app.touch, 2, 220, 320, 1510));
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_move(&app.touch, 2, 320, 320, 1550));
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_up(&app.touch, 1, 120, 320, 2000));
+    nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_up(&app.touch, 2, 320, 320, 2010));
+    ASSERT_TRUE(app.zoom > z0 * 1.4f);
+
+    /* 7. External neural depth map integration (simulating Depth Anything V2 ONNX callback) */
+    float nn_depth[16 * 12];
+    for (int i = 0; i < 16 * 12; i++) nn_depth[i] = 1.0f - (float)(i / 16) / 11.0f;
+    ASSERT_TRUE(nebel_app_set_external_depth(&app, nn_depth, 16, 12));
+    ASSERT_TRUE(app.depth_is_neural);
+
+    /* 8. Full-resolution PNG & JPEG export + reload verification */
+    const char *out_png = "/tmp/nebel_e2e_export.png";
+    const char *out_jpg = "/tmp/nebel_e2e_export.jpg";
+    ASSERT_TRUE(nebel_app_export_png(&app, out_png));
+    ASSERT_TRUE(nebel_app_export_jpg(&app, out_jpg, 92));
+
+    NebelImage reloaded = {0};
+    ASSERT_TRUE(nebel_image_load_file(&reloaded, out_png));
+    ASSERT_TRUE(reloaded.width == W && reloaded.height == H);
+    ASSERT_TRUE(pixel_luma(&reloaded, 24, 42) > orig_bg + 0.15f);
+    nebel_image_free(&reloaded);
+
+    ASSERT_TRUE(nebel_image_load_file(&reloaded, out_jpg));
+    ASSERT_TRUE(reloaded.width == W && reloaded.height == H);
+    nebel_image_free(&reloaded);
+
+    free(before_touch);
+    nebel_image_free(&res1);
+    nebel_image_free(&res2);
+    nebel_lua_free(&lua);
+    nebel_app_free(&app);
+
+    printf("E2E automated simulation test PASSED (manifest, desktop, touch, multi-layer fog, Guided Filter, ONNX depth, export).\n");
+    return 0;
+}

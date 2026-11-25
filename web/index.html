@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Nebel — Atmospheric Fog Studio</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: #0e1013; color: #dce3ec;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overscroll-behavior: none;
+    }
+    #canvas {
+      display: block; width: 100vw; height: 100vh;
+      touch-action: none; user-select: none; -webkit-user-select: none;
+      outline: none;
+    }
+    #loader {
+      position: fixed; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 12px;
+      background: #0e1013; z-index: 10; transition: opacity 0.25s ease;
+    }
+    #loader.hidden { opacity: 0; pointer-events: none; }
+    #loader h1 { font-size: 22px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; }
+    #loader p { font-size: 13px; color: #8c98a8; }
+    #drop-hint {
+      position: fixed; inset: 12px; border: 2px dashed #5ba4e5; border-radius: 12px;
+      background: rgba(14, 16, 19, 0.72); color: #e8f1fa;
+      display: none; align-items: center; justify-content: center;
+      font-size: 18px; pointer-events: none; z-index: 20;
+    }
+    #drop-hint.show { display: flex; }
+  </style>
+</head>
+<body>
+  <div id="loader">
+    <h1>Nebel</h1>
+    <p id="loader-status">Loading external shaders, Lua scripts &amp; sample photos...</p>
+  </div>
+  <div id="drop-hint">Drop a JPEG or PNG photo to edit</div>
+  <input id="file-input" type="file" accept="image/png,image/jpeg" style="display:none" />
+  <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="0"></canvas>
+
+  <script src="nebel_web.js"></script>
+  <script src="nebel.js"></script>
+</body>
+</html>
