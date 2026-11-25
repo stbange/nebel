@@ -461,6 +461,8 @@ static void test_app_and_lua_bridge(void) {
         "assert(math.abs(nebel.view.split_pos() - 0.4) < 0.01)\n"
         "assert(nebel.view.can_undo()); assert(nebel.view.undo()); assert(nebel.view.redo())\n"
         "nebel.view.trigger_auto_depth(); nebel.view.sample_airlight(-1, -1)\n"
+        "nebel.view.set_show_depth(true); assert(nebel.view.show_depth())\n"
+        "nebel.view.set_show_depth(false); assert(not nebel.view.show_depth())\n"
         "nebel.view.set_status('ok'); assert(nebel.view.status() == 'ok')\n"
         "local cx,cy,cw,ch = nebel.view.canvas_rect(); assert(cw > 0 and ch > 0)\n"
         "nebel.io.open_photo(); nebel.io.export_png(); nebel.io.export_jpg(90); nebel.io.reload_scripts()\n"

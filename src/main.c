@@ -35,6 +35,7 @@ typedef struct {
 static const char *map_key_name(SDL_Keycode key) {
     switch (key) {
     case SDLK_B: return "B";
+    case SDLK_D: return "D";
     case SDLK_E: return "E";
     case SDLK_P: return "P";
     case SDLK_S: return "S";
@@ -144,6 +145,13 @@ static void handle_events(NebelRuntime *rt, int vw, int vh) {
             float fy = ev.tfinger.y * (float)vh;
             rt->mouse_x = fx; rt->mouse_y = fy;
             rt->mouse_down = true; rt->mouse_pressed = true;
+            float u = 0.0f, v = 0.0f;
+            if (rt->app.split_enabled && !rt->app.ui.pointer_over_ui &&
+                nebel_app_screen_to_photo(&rt->app, vw, vh, fx, fy, &u, &v) &&
+                fabsf(u - rt->app.split_pos) < 0.055f) {
+                rt->split_dragging = true;
+                break;
+            }
             NebelGestureAction act = nebel_touch_finger_down(
                 &rt->app.touch, (int64_t)ev.tfinger.fingerID, fx, fy, SDL_GetTicks());
             nebel_app_handle_gesture(&rt->app, vw, vh, act);
@@ -154,6 +162,14 @@ static void handle_events(NebelRuntime *rt, int vw, int vh) {
             float fx = ev.tfinger.x * (float)vw;
             float fy = ev.tfinger.y * (float)vh;
             rt->mouse_x = fx; rt->mouse_y = fy;
+            if (rt->split_dragging) {
+                float u = 0.5f, v = 0.5f;
+                nebel_app_screen_to_photo(&rt->app, vw, vh, fx, fy, &u, &v);
+                if (u < 0.05f) u = 0.05f;
+                if (u > 0.95f) u = 0.95f;
+                rt->app.split_pos = u;
+                break;
+            }
             NebelGestureAction act = nebel_touch_finger_move(
                 &rt->app.touch, (int64_t)ev.tfinger.fingerID, fx, fy, SDL_GetTicks());
             nebel_app_handle_gesture(&rt->app, vw, vh, act);
@@ -165,6 +181,10 @@ static void handle_events(NebelRuntime *rt, int vw, int vh) {
             float fy = ev.tfinger.y * (float)vh;
             rt->mouse_x = fx; rt->mouse_y = fy;
             rt->mouse_down = false; rt->mouse_released = true;
+            if (rt->split_dragging) {
+                rt->split_dragging = false;
+                break;
+            }
             NebelGestureAction act = nebel_touch_finger_up(
                 &rt->app.touch, (int64_t)ev.tfinger.fingerID, fx, fy, SDL_GetTicks());
             nebel_app_handle_gesture(&rt->app, vw, vh, act);

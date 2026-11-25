@@ -1,13 +1,17 @@
 // Nebel Web Runtime Bridge (MIT License)
 // Loads loose assets/ and scripts/ beside nebel.wasm into MEMFS (never baked into WASM),
-// bridges browser file upload/download, and lazy-loads optional Depth Anything V2 Small (ONNX).
+// bridges browser file upload/download, and runs Depth Anything V2 Small (ONNX) in WASM.
 
 (function () {
-  const ORT_CDN = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js";
+  const ORT_BASE = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/";
+  const ORT_CDN = ORT_BASE + "ort.min.js";
   const DEPTH_MODEL_URL =
     "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model_quantized.onnx";
+  const DEPTH_MODEL_SHA256 =
+    "fcf51f1b230362b28690bb9d1809bf0431f29cad20534e3f589bd7285547f20d";
 
   let ortSessionPromise = null;
+  let depthJobSeq = 0;
 
   function setLoaderStatus(msg) {
     const el = document.getElementById("loader-status");
@@ -128,28 +132,53 @@
     });
   }
 
+  async function verifySha256(bytes, expectedHex) {
+    if (!expectedHex || !window.crypto || !window.crypto.subtle) return true;
+    const digest = await window.crypto.subtle.digest("SHA-256", bytes);
+    const hex = Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    return hex === expectedHex;
+  }
+
   async function fetchCachedModel(url) {
     if (typeof caches !== "undefined") {
       const cache = await caches.open("nebel-onnx-v1");
       const hit = await cache.match(url);
-      if (hit) return new Uint8Array(await hit.arrayBuffer());
+      if (hit) {
+        const bytes = new Uint8Array(await hit.arrayBuffer());
+        if (await verifySha256(bytes, DEPTH_MODEL_SHA256)) return bytes;
+        await cache.delete(url);
+      }
       const res = await fetch(url);
       if (!res.ok) throw new Error("Model HTTP " + res.status);
-      await cache.put(url, res.clone());
-      return new Uint8Array(await res.arrayBuffer());
+      const bytes = new Uint8Array(await res.clone().arrayBuffer());
+      if (!(await verifySha256(bytes, DEPTH_MODEL_SHA256))) {
+        throw new Error("ONNX model SHA-256 mismatch");
+      }
+      await cache.put(url, res);
+      return bytes;
     }
     const res = await fetch(url);
     if (!res.ok) throw new Error("Model HTTP " + res.status);
-    return new Uint8Array(await res.arrayBuffer());
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (!(await verifySha256(bytes, DEPTH_MODEL_SHA256))) {
+      throw new Error("ONNX model SHA-256 mismatch");
+    }
+    return bytes;
   }
 
   async function getDepthSession() {
     if (!ortSessionPromise) {
       ortSessionPromise = (async () => {
         if (!window.ort) await loadScript(ORT_CDN);
+        // Point ORT to CDN wasm binaries and single-thread mode (no COOP/COEP needed on GitHub Pages)
+        window.ort.env.wasm.wasmPaths = ORT_BASE;
+        window.ort.env.wasm.numThreads = 1;
+        window.ort.env.wasm.simd = true;
         const modelBytes = await fetchCachedModel(DEPTH_MODEL_URL);
         return window.ort.InferenceSession.create(modelBytes, {
-          executionProviders: ["webgpu", "wasm"],
+          executionProviders: ["wasm"],
         });
       })().catch((err) => {
         ortSessionPromise = null;
@@ -162,10 +191,13 @@
   window.nebelWebRunAutoDepth = async function (rgbaPtr, w, h) {
     const mod = window.Module;
     if (!mod) return;
+    const seq = ++depthJobSeq;
     const copy = new Uint8Array(mod.HEAPU8.buffer, rgbaPtr, w * h * 4).slice();
     try {
       const session = await getDepthSession();
-      const size = 518;
+      if (seq !== depthJobSeq) return; // Superseded by newer photo
+
+      const size = 392; // Multiple of ViT patch 14 (~3s in WASM, crisp antlers/trees)
       const tensorData = new Float32Array(3 * size * size);
       const mean = [0.485, 0.456, 0.406];
       const std = [0.229, 0.224, 0.225];
@@ -187,13 +219,15 @@
       const feeds = {};
       feeds[inputName] = new window.ort.Tensor("float32", tensorData, [1, 3, size, size]);
       const outMap = await session.run(feeds);
+      if (seq !== depthJobSeq) return;
+
       const outTensor = outMap[session.outputNames[0]];
       const raw = outTensor.data;
       const dims = outTensor.dims;
       const oh = dims[dims.length - 2];
       const ow = dims[dims.length - 1];
 
-      // Depth Anything outputs inverse relative depth (higher = nearer); invert so 1 = far
+      // Depth Anything outputs disparity (higher = closer); invert so higher = farther
       const inv = new Float32Array(ow * oh);
       let lo = Infinity, hi = -Infinity;
       for (let i = 0; i < raw.length; i++) {
@@ -212,7 +246,9 @@
       mod._free(ptr);
     } catch (err) {
       console.warn("[nebel] Auto depth fell back to classical CV:", err);
-      if (mod._nebel_web_on_depth_failed) mod._nebel_web_on_depth_failed();
+      if (seq === depthJobSeq && mod._nebel_web_on_depth_failed) {
+        mod._nebel_web_on_depth_failed();
+      }
     }
   };
 

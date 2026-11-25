@@ -1,9 +1,10 @@
 in vec2 v_uv;
 out vec4 frag_color;
 
-uniform sampler2D u_prev;  /* Current accumulated linear RGB + fog opacity in .a */
-uniform sampler2D u_depth; /* Normalized depth [0,1] in .r */
-uniform sampler2D u_mask;  /* Guided-Filter refined layer mask [0,1] in .r */
+uniform sampler2D u_prev;    /* Current accumulated linear RGB + fog opacity in .a */
+uniform sampler2D u_depth;   /* Normalized 3D depth [0=near, 1=far] in .r */
+uniform sampler2D u_mask;    /* Guided-Filter refined painted fog mask [0,1] in .r */
+uniform sampler2D u_ambient; /* Wide blurred scene illumination map (linear RGB) */
 
 uniform float u_density;
 uniform float u_height_falloff;
@@ -64,32 +65,52 @@ void main() {
     }
 
     float d = texture(u_depth, v_uv).r;
-    float d_gate = smoothstep(u_depth_min - 0.08, u_depth_min + 0.12, d);
-    if (u_depth_max < 0.999) {
-        d_gate *= 1.0 - smoothstep(u_depth_max - 0.08, u_depth_max + 0.08, d);
+
+    /* 1. True Beer-Lambert depth-integrated slab: ZERO fog in front of depth_min */
+    float d_enter = smoothstep(u_depth_min - 0.035, u_depth_min + 0.075, d);
+    if (d_enter <= 0.0005) {
+        frag_color = prev;
+        return;
     }
+    float d_exit = (u_depth_max < 0.985)
+        ? (1.0 - smoothstep(u_depth_max - 0.08, u_depth_max + 0.04, d))
+        : 1.0;
+    float d_span = max(0.08, u_depth_max - u_depth_min);
+    float d_prog = clamp((d - u_depth_min) / d_span, 0.0, 1.0);
+    float depth_weight = d_enter * d_exit * (0.15 + 0.85 * pow(d_prog, 1.3));
 
-    float height_above = max(0.0, u_horizon_y - v_uv.y);
-    float h_att = exp(-u_height_falloff * height_above * 2.5);
-
-    float persp = 0.25 + abs(v_uv.y - u_horizon_y) * 2.5;
+    /* 2. 3D depth-sliced volumetric turbulence (each depth plane cuts different wisps) */
+    float persp = 0.22 + abs(v_uv.y - u_horizon_y) * 2.4;
     vec2 ground_uv = vec2((v_uv.x - 0.5) / (persp + 0.25), (v_uv.y - u_horizon_y) / (persp + 0.15));
-    float n1 = fbm(ground_uv * u_noise_scale, u_seed);
-    float n2 = fbm(ground_uv * (u_noise_scale * 1.9) + vec2(n1 * 0.9, -n1 * 0.6), u_seed + 41.0);
+    vec2 p3d = ground_uv * u_noise_scale + vec2(d * 2.3, -d * 1.4);
+    float n1 = fbm(p3d, u_seed);
+    float n2 = fbm(p3d * 2.1 + vec2(n1 * 1.1, -n1 * 0.8) + vec2(-d * 1.7, d * 2.0), u_seed + 41.0);
     float n = mix(n1, n2, 0.45);
-    /* Break circular marker edges into organic drifting mist wisps */
-    float wispy = smoothstep(0.06, 0.92, m + (n - 0.52) * u_noise_amount * 1.15);
-    float m_org = mix(m, m * (0.30 + 1.05 * wispy), u_noise_amount);
-    float turb = 1.0 - u_noise_amount * 0.55 + u_noise_amount * 0.95 * n;
 
-    float tau = u_density * m_org * (0.08 + 0.92 * d_gate) * h_att * turb;
+    /* Break circular marker edges into drifting mist tendrils */
+    float wispy = smoothstep(0.06, 0.90, m + (n - 0.52) * u_noise_amount * 1.2);
+    float m_org = mix(m, m * (0.28 + 1.08 * wispy), u_noise_amount);
+    float turb = 1.0 - u_noise_amount * 0.52 + u_noise_amount * 0.98 * n;
+
+    /* 3. Perspective 3D fog ceiling so mist pools in low valleys and clears high peaks/sky */
+    float ceiling = u_horizon_y + (1.0 - d) * 0.10;
+    float above = max(0.0, ceiling - v_uv.y);
+    float h_att = exp(-u_height_falloff * max(0.0, above * 2.8 - (n - 0.48) * 0.22 * u_noise_amount));
+
+    float tau = u_density * m_org * depth_weight * h_att * turb;
     float trans = exp(-tau);
     float opacity = 1.0 - trans;
 
+    /* 4. Scene-illumination-coupled airlight + directional Henyey-Greenstein sun scatter */
+    vec3 amb = texture(u_ambient, v_uv).rgb;
+    float amb_lum = dot(amb, vec3(0.2126, 0.7152, 0.0722));
+    /* Fog catches warm light in sunlit clearings and stays subtle/cool in dark shadows */
+    vec3 local_air = mix(u_airlight, u_airlight * (0.38 + 1.15 * sqrt(max(amb_lum, 0.0))) + amb * 0.30, 0.65);
+
     float ang = clamp(length(v_uv - u_sun_pos) * 2.2, 0.0, 3.14159265);
-    float sun_boost = u_sun_strength * henyey_greenstein(cos(ang), u_sun_g);
-    vec3 warm = vec3(1.12, 1.03, 0.88);
-    vec3 air = u_airlight + vec3(sun_boost * 0.45) * warm;
+    float sun_boost = u_sun_strength * henyey_greenstein(cos(ang), u_sun_g) * (0.35 + 0.65 * sqrt(max(amb_lum, 0.0)));
+    vec3 warm = vec3(1.15, 1.02, 0.84);
+    vec3 air = local_air + vec3(sun_boost * 0.55) * warm;
 
     vec3 col = clamp(prev.rgb * trans + air * opacity, 0.0, 1.5);
     float accum = clamp(prev.a + opacity * (1.0 - prev.a), 0.0, 1.0);

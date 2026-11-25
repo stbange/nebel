@@ -97,6 +97,7 @@ bool nebel_app_load_image(NebelAppState *app, const NebelImage *img) {
     app->pan_y = 0.0f;
 
     nebel_fog_layer_init(&app->layers[0], "Valley Mist", app->work_img.width, app->work_img.height);
+    app->layers[0].params.depth_min = 0.40f;
     nebel_image_sample_airlight(&app->work_img, -1.0f, -1.0f, app->layers[0].params.airlight);
     app->layer_count = 1;
     app->active_layer = 0;
@@ -107,7 +108,12 @@ bool nebel_app_load_image(NebelAppState *app, const NebelImage *img) {
     app->dirty_photo_gpu = true;
     app->dirty_masks_gpu = true;
     app->dirty_depth_gpu = true;
+#if defined(__EMSCRIPTEN__)
+    app->req_auto_depth = true;
+    nebel_app_set_status(app, "Photo loaded - analyzing 3D depth...");
+#else
     nebel_app_set_status(app, "Photo loaded (classical depth ready)");
+#endif
     return true;
 }
 

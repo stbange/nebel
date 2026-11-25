@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 static float clamp01(float v) {
     if (v < 0.0f) return 0.0f;
@@ -111,7 +112,55 @@ static void extract_luma(const NebelImage *img, float *luma) {
     size_t n = (size_t)img->width * (size_t)img->height;
     for (size_t i = 0; i < n; i++) {
         const float *p = &img->rgba[i * 4u];
-        luma[i] = clamp01(0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2]);
+        /* Use perceptual gamma luma for edge guidance so dark fur/pine edges stay high-contrast */
+        float lin = clamp01(0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2]);
+        luma[i] = sqrtf(lin);
+    }
+}
+
+/* Spread hyperbolic inverse-depth values cleanly across [0, 1] using blended p2..p98 + CDF */
+static void normalize_depth_perceptual(float *buf, size_t n) {
+    if (!buf || n == 0) return;
+    float min_v = 1e9f, max_v = -1e9f;
+    for (size_t i = 0; i < n; i++) {
+        if (buf[i] < min_v) min_v = buf[i];
+        if (buf[i] > max_v) max_v = buf[i];
+    }
+    float span = max_v - min_v;
+    if (span <= 1e-5f) {
+        for (size_t i = 0; i < n; i++) buf[i] = 0.5f;
+        return;
+    }
+
+    uint32_t hist[256] = {0};
+    for (size_t i = 0; i < n; i++) {
+        float t = clamp01((buf[i] - min_v) / span);
+        int bin = (int)(t * 255.0f + 0.5f);
+        if (bin > 255) bin = 255;
+        hist[bin]++;
+    }
+
+    float cdf[256];
+    uint32_t acc = 0;
+    float p02 = 0.0f, p98 = 1.0f;
+    bool got_lo = false, got_hi = false;
+    for (int b = 0; b < 256; b++) {
+        acc += hist[b];
+        float c = (float)acc / (float)n;
+        cdf[b] = c;
+        if (!got_lo && c >= 0.02f) { p02 = (float)b / 255.0f; got_lo = true; }
+        if (!got_hi && c >= 0.98f) { p98 = (float)b / 255.0f; got_hi = true; }
+    }
+    float pspan = p98 - p02;
+    if (pspan < 0.05f) pspan = 0.05f;
+
+    for (size_t i = 0; i < n; i++) {
+        float t = clamp01((buf[i] - min_v) / span);
+        int bin = (int)(t * 255.0f + 0.5f);
+        if (bin > 255) bin = 255;
+        float lin_p = clamp01((t - p02) / pspan);
+        /* Blend percentile-equalized rank (separates valley/midground layers) + linear depth */
+        buf[i] = clamp01(0.55f * cdf[bin] + 0.45f * lin_p);
     }
 }
 
@@ -130,7 +179,7 @@ bool nebel_depth_estimate_classical(const NebelImage *img, float horizon_y, floa
 
     extract_luma(img, luma);
 
-    /* 1. Defocus sharpness cue (abs Laplacian) + Dark Channel cue (min RGB) */
+    /* 1. Multi-cue local detail (foreground sharpness) + Dark Channel aerial haze */
     for (int y = 0; y < h; y++) {
         int ym = y > 0 ? y - 1 : 0;
         int yp = y + 1 < h ? y + 1 : h - 1;
@@ -145,56 +194,48 @@ bool nebel_depth_estimate_classical(const NebelImage *img, float horizon_y, floa
                 - luma[(size_t)ym * (size_t)w + (size_t)x]
                 - luma[(size_t)yp * (size_t)w + (size_t)x]
             );
-            sharp[idx] = clamp01(lap * 4.0f);
+            sharp[idx] = clamp01(lap * 5.0f);
 
             const float *p = &img->rgba[idx * 4u];
             float m = p[0] < p[1] ? p[0] : p[1];
             if (p[2] < m) m = p[2];
-            dark[idx] = clamp01(m);
+            /* Combine dark channel (haze lifts blacks) and skyward blue-shift */
+            dark[idx] = clamp01(sqrtf(clamp01(m)));
         }
     }
 
-    int rad = (w < h ? w : h) / 48;
+    int rad = (w < h ? w : h) / 40;
     if (rad < 2) rad = 2;
     if (rad > 16) rad = 16;
 
-    /* Smooth sharpness and dark channel locally */
     box_filter(sharp, raw, w, h, rad);
     for (size_t i = 0; i < n; i++) sharp[i] = raw[i];
     box_filter(dark, raw, w, h, rad);
     for (size_t i = 0; i < n; i++) dark[i] = raw[i];
 
-    /* 2. Fuse horizon ground-plane + defocus (low sharpness = farther) + aerial haze */
-    float min_d = 1e9f, max_d = -1e9f;
+    /* 2. Fuse aerial haze + local sharpness + horizon plane, keeping dark crisp silhouettes near */
     for (int y = 0; y < h; y++) {
         float ny = h > 1 ? (float)y / (float)(h - 1) : 0.0f;
         float horiz_cue;
         if (ny <= horizon_y) {
-            horiz_cue = 1.0f; /* Sky / above horizon is far */
+            horiz_cue = 1.0f;
         } else {
             float denom = 1.0f - horizon_y;
             float t = denom > 1e-4f ? (ny - horizon_y) / denom : 1.0f;
-            /* Perspective ground-plane falloff: near horizon stays far, bottom is near */
             horiz_cue = powf(1.0f - clamp01(t), 1.35f);
         }
         for (int x = 0; x < w; x++) {
             size_t idx = (size_t)y * (size_t)w + (size_t)x;
-            float defocus_cue = 1.0f - clamp01(sharp[idx] * 2.2f);
+            float defocus_cue = 1.0f - clamp01(sharp[idx] * 2.5f);
             float haze_cue = dark[idx];
-            float d = 0.55f * horiz_cue + 0.25f * defocus_cue + 0.20f * haze_cue;
+            /* Weight dark-channel atmospheric haze strongly so dark foreground trees/animals stay near */
+            float d = 0.38f * horiz_cue + 0.27f * defocus_cue + 0.35f * haze_cue;
             raw[idx] = d;
-            if (d < min_d) min_d = d;
-            if (d > max_d) max_d = d;
         }
     }
 
-    float range = max_d - min_d;
-    for (size_t i = 0; i < n; i++) {
-        raw[i] = range > 1e-5f ? clamp01((raw[i] - min_d) / range) : 0.5f;
-    }
-
-    /* 3. Lock depth boundaries onto real photo edges with Guided Filter */
-    bool ok = nebel_guided_filter(luma, raw, out_depth, w, h, rad, 0.002f);
+    normalize_depth_perceptual(raw, n);
+    bool ok = nebel_guided_filter(luma, raw, out_depth, w, h, rad, 0.0008f);
     free(luma);
     return ok;
 }
@@ -214,14 +255,6 @@ bool nebel_depth_refine_external(const NebelImage *img, const float *raw_depth,
     float *up = luma + n;
     extract_luma(img, luma);
 
-    float min_v = 1e9f, max_v = -1e9f;
-    size_t rn = (size_t)raw_w * (size_t)raw_h;
-    for (size_t i = 0; i < rn; i++) {
-        if (raw_depth[i] < min_v) min_v = raw_depth[i];
-        if (raw_depth[i] > max_v) max_v = raw_depth[i];
-    }
-    float span = max_v - min_v;
-
     for (int y = 0; y < h; y++) {
         float sy = h > 1 ? ((float)y / (float)(h - 1)) * (float)(raw_h - 1) : 0.0f;
         int y0 = (int)floorf(sy);
@@ -236,15 +269,17 @@ bool nebel_depth_refine_external(const NebelImage *img, const float *raw_depth,
             float d10 = raw_depth[(size_t)y0 * (size_t)raw_w + (size_t)x1];
             float d01 = raw_depth[(size_t)y1 * (size_t)raw_w + (size_t)x0];
             float d11 = raw_depth[(size_t)y1 * (size_t)raw_w + (size_t)x1];
-            float d = (d00 + (d10 - d00) * fx) * (1.0f - fy) +
-                      (d01 + (d11 - d01) * fx) * fy;
-            up[(size_t)y * (size_t)w + (size_t)x] = span > 1e-5f ? clamp01((d - min_v) / span) : 0.5f;
+            up[(size_t)y * (size_t)w + (size_t)x] =
+                (d00 + (d10 - d00) * fx) * (1.0f - fy) + (d01 + (d11 - d01) * fx) * fy;
         }
     }
 
-    int rad = (w < h ? w : h) / 64;
+    /* Perceptual histogram + p2..p98 stretch prevents near twigs from compressing valley/forest depth */
+    normalize_depth_perceptual(up, n);
+
+    int rad = (w < h ? w : h) / 140;
     if (rad < 2) rad = 2;
-    if (rad > 12) rad = 12;
+    if (rad > 5) rad = 5;
     bool ok = nebel_guided_filter(luma, up, out_depth, w, h, rad, 0.001f);
     free(luma);
     return ok;

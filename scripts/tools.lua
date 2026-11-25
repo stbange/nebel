@@ -16,6 +16,7 @@ function M.handle_key(key, ctrl, shift)
     end
     if ctrl and key == "Y" then nebel.view.redo(); return end
     if key == "B" then nebel.brush.set_tool("fog")
+    elseif key == "D" then nebel.view.set_show_depth(not nebel.view.show_depth())
     elseif key == "E" then nebel.brush.set_tool("eraser")
     elseif key == "P" then nebel.brush.set_tool("protect")
     elseif key == "S" then nebel.brush.set_tool("sun")

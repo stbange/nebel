@@ -10,7 +10,7 @@ local M = {
 }
 
 local function draw_brush_cursor()
-    if nebel.ui.pointer_over_ui() or nebel.ui.is_touch_mode() then return end
+    if nebel.ui.pointer_over_ui() or nebel.ui.is_touch_mode() or nebel.view.show_depth() then return end
     local cx, cy, cw, ch = nebel.view.canvas_rect()
     local mx, my = nebel.ui.pointer_pos()
     if mx < cx or mx > cx + cw or my < cy or my > cy + ch then return end
@@ -41,27 +41,49 @@ local function draw_top_bar(vw, touch)
 
     for i, s in ipairs(pipeline.default_samples) do
         local w = touch and 62 or 66
-        if x + w < vw - 180 then
+        if x + w < vw - 220 then
             if nebel.ui.button(20 + i, x, by, w, bh, s.label, false, -1) then
-                nebel.io.load_sample(s.path)
+                if nebel.io.load_sample(s.path) then
+                    if i == 2 then
+                        presets.apply("Backlit Wildlife")
+                        nebel.brush.set_tool("fog")
+                        nebel.brush.set_radius(0.42)
+                        nebel.brush.set_opacity(0.80)
+                        nebel.brush.set_softness(0.95)
+                        nebel.brush.stroke_begin(0.15, 0.44)
+                        nebel.brush.stroke_move(0.85, 0.44)
+                        nebel.brush.stroke_end()
+                        nebel.brush.set_radius(0.10)
+                        nebel.brush.set_softness(0.75)
+                    else
+                        presets.apply("Morning Valley")
+                    end
+                end
             end
             x = x + w + 6
         end
     end
 
-    local depth_lbl = nebel.view.is_neural_depth() and "Depth:AI" or "AutoDepth"
-    if x + 90 < vw - 150 then
-        if nebel.ui.button(30, x, by, 90, bh, depth_lbl, nebel.view.is_neural_depth(), -1) then
+    local depth_lbl = nebel.view.is_neural_depth() and "3D:AI" or "Auto3D"
+    if x + 76 < vw - 180 then
+        if nebel.ui.button(30, x, by, 74, bh, depth_lbl, nebel.view.is_neural_depth(), -1) then
             nebel.view.trigger_auto_depth()
         end
-        x = x + 96
+        x = x + 80
     end
 
-    if x + 64 < vw - 130 then
-        if nebel.ui.button(31, x, by, 62, bh, "Split", nebel.view.split_enabled(), -1) then
-            nebel.view.set_split(not nebel.view.split_enabled())
+    if x + 64 < vw - 160 then
+        if nebel.ui.button(32, x, by, 62, bh, "Depth", nebel.view.show_depth(), -1) then
+            nebel.view.set_show_depth(not nebel.view.show_depth())
         end
         x = x + 68
+    end
+
+    if x + 56 < vw - 140 then
+        if nebel.ui.button(31, x, by, 54, bh, "Split", nebel.view.split_enabled(), -1) then
+            nebel.view.set_split(not nebel.view.split_enabled())
+        end
+        x = x + 60
     end
 
     -- Right side: Undo, Redo, Export, Mute
@@ -112,15 +134,15 @@ local function draw_desktop_sidebar(vw, vh)
             nebel.brush.set_tool(t.id)
         end
     end
-    y = y + 36
+    y = y + 34
 
     -- Brush size & opacity
-    local rad, c1 = nebel.ui.slider(120, sx + pad, y, iw, 28, "Brush Size", nebel.brush.get_radius(), 0.01, 0.30)
+    local rad, c1 = nebel.ui.slider(120, sx + pad, y, iw, 26, "Brush Size", nebel.brush.get_radius(), 0.01, 0.40)
     if c1 then nebel.brush.set_radius(rad) end
-    y = y + 32
-    local op, c2 = nebel.ui.slider(121, sx + pad, y, iw, 28, "Opacity", nebel.brush.get_opacity(), 0.05, 1.0)
+    y = y + 30
+    local op, c2 = nebel.ui.slider(121, sx + pad, y, iw, 26, "Opacity", nebel.brush.get_opacity(), 0.05, 1.0)
     if c2 then nebel.brush.set_opacity(op) end
-    y = y + 36
+    y = y + 32
 
     -- Layers section
     nebel.ui.label(sx + pad, y, "FOG LAYERS", 0.60, 0.66, 0.74, 1.0)
@@ -133,16 +155,20 @@ local function draw_desktop_sidebar(vw, vh)
     local active = nebel.layers.active()
     for i = 1, math.min(lcount, 4) do
         local name = nebel.layers.name(i) or ("Layer " .. i)
-        if nebel.ui.button(150 + i, sx + pad, y, iw - 60, 24, name, i == active, -1) then
+        local vis = (nebel.layers.get(i, "visible") or 1) >= 0.5
+        if nebel.ui.button(150 + i, sx + pad, y, iw - 86, 24, name, i == active, -1) then
             nebel.layers.select(i)
         end
-        if nebel.ui.button(160 + i, sx + pad + iw - 56, y, 26, 24, "C", false, -1) then
+        if nebel.ui.button(155 + i, sx + pad + iw - 82, y, 24, 24, vis and "V" or "-", vis, -1) then
+            nebel.layers.set(i, "visible", vis and 0 or 1)
+        end
+        if nebel.ui.button(160 + i, sx + pad + iw - 54, y, 24, 24, "C", false, -1) then
             nebel.layers.clear(i)
         end
-        if lcount > 1 and nebel.ui.button(170 + i, sx + pad + iw - 26, y, 26, 24, "X", false, -1) then
+        if lcount > 1 and nebel.ui.button(170 + i, sx + pad + iw - 26, y, 24, 24, "X", false, -1) then
             nebel.layers.remove(i)
         end
-        y = y + 28
+        y = y + 27
     end
     y = y + 6
 
@@ -154,23 +180,35 @@ local function draw_desktop_sidebar(vw, vh)
         end
         y = y + 22
         for i, sl in ipairs(pipeline.sliders) do
-            if y + 32 > vh - 102 then break end
+            if y + 30 > vh - 128 then break end
             local val = nebel.layers.get(active, sl.key) or sl.min
-            local nv, ch = nebel.ui.slider(200 + i, sx + pad, y, iw, 28, sl.label, val, sl.min, sl.max)
+            local nv, ch = nebel.ui.slider(200 + i, sx + pad, y, iw, 26, sl.label, val, sl.min, sl.max)
             if ch then nebel.layers.set(active, sl.key, nv) end
-            y = y + 32
+            y = y + 30
+        end
+        -- Fog Warmth (cool mist blue <-> warm golden haze)
+        if y + 28 <= vh - 98 then
+            local ar = nebel.layers.get(active, "airlight_r") or 0.78
+            local ab = nebel.layers.get(active, "airlight_b") or 0.88
+            local warmth = math.max(0.0, math.min(1.0, (ar - ab + 0.35) / 0.70))
+            local nw, cw = nebel.ui.slider(240, sx + pad, y, iw, 26, "Fog Warmth", warmth, 0.0, 1.0)
+            if cw then
+                nebel.layers.set(active, "airlight_r", 0.68 + 0.30 * nw)
+                nebel.layers.set(active, "airlight_g", 0.78 + 0.08 * nw)
+                nebel.layers.set(active, "airlight_b", 0.94 - 0.34 * nw)
+            end
         end
     end
 
     -- Presets at bottom of sidebar
-    local py = math.max(y + 8, vh - 102)
+    local py = math.max(y + 8, vh - 96)
     nebel.ui.label(sx + pad, py, "PRESETS", 0.60, 0.66, 0.74, 1.0)
     py = py + 18
     local pw = (iw - 6) / 2
     for i, pname in ipairs(presets.order) do
         local col = (i - 1) % 2
         local row = math.floor((i - 1) / 2)
-        if nebel.ui.button(300 + i, sx + pad + col * (pw + 6), py + row * 30, pw, 26, pname, false, -1) then
+        if nebel.ui.button(300 + i, sx + pad + col * (pw + 6), py + row * 29, pw, 25, pname, false, -1) then
             presets.apply(pname)
         end
     end
@@ -209,18 +247,18 @@ local function draw_mobile_drawer(vw, vh)
                 nebel.brush.set_tool(t.id)
             end
         end
-        local r, cr = nebel.ui.slider(430, 10, cy + 48, vw - 20, 36, "Brush Size", nebel.brush.get_radius(), 0.01, 0.30)
+        local r, cr = nebel.ui.slider(430, 10, cy + 48, vw - 20, 36, "Brush Size", nebel.brush.get_radius(), 0.01, 0.40)
         if cr then nebel.brush.set_radius(r) end
     elseif M.mobile_tab == "fog" and nebel.layers.count() > 0 then
         local half = (vw - 30) / 2
-        local d, cd = nebel.ui.slider(440, 10, cy, half, 36, "Density", nebel.layers.get(active, "density") or 1.2, 0.0, 3.5)
+        local d, cd = nebel.ui.slider(440, 10, cy, half, 36, "Density", nebel.layers.get(active, "density") or 1.8, 0.0, 4.0)
         if cd then nebel.layers.set(active, "density", d) end
-        local h, ch = nebel.ui.slider(441, 20 + half, cy, half, 36, "Falloff", nebel.layers.get(active, "height_falloff") or 1.8, 0.0, 6.0)
-        if ch then nebel.layers.set(active, "height_falloff", h) end
-        local s, cs = nebel.ui.slider(442, 10, cy + 44, half, 36, "Sun Glow", nebel.layers.get(active, "sun_strength") or 0.35, 0.0, 1.6)
+        local n, cn = nebel.ui.slider(441, 20 + half, cy, half, 36, "Near Depth", nebel.layers.get(active, "depth_min") or 0.40, 0.0, 0.95)
+        if cn then nebel.layers.set(active, "depth_min", n) end
+        local s, cs = nebel.ui.slider(442, 10, cy + 44, half, 36, "Sun Glow", nebel.layers.get(active, "sun_strength") or 0.45, 0.0, 1.6)
         if cs then nebel.layers.set(active, "sun_strength", s) end
-        local b, cb = nebel.ui.slider(443, 20 + half, cy + 44, half, 36, "Bloom", nebel.layers.get(active, "bloom_amount") or 0.25, 0.0, 1.2)
-        if cb then nebel.layers.set(active, "bloom_amount", b) end
+        local h, ch = nebel.ui.slider(443, 20 + half, cy + 44, half, 36, "Falloff", nebel.layers.get(active, "height_falloff") or 2.0, 0.0, 6.0)
+        if ch then nebel.layers.set(active, "height_falloff", h) end
     elseif M.mobile_tab == "layers" then
         if nebel.ui.button(450, 10, cy, 86, 38, "+ Layer", false, -1) then
             pipeline.add_named_layer()

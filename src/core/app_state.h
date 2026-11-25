@@ -43,6 +43,7 @@ typedef struct {
     float pan_x, pan_y;
     bool split_enabled;
     float split_pos; /* [0, 1] */
+    bool show_depth;
 
     NebelUndoStack undo;
     NebelTouchState touch;

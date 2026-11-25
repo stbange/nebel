@@ -200,6 +200,11 @@ static int l_view_can_undo(lua_State *L) { lua_pushboolean(L, nebel_undo_can_und
 static int l_view_can_redo(lua_State *L) { lua_pushboolean(L, nebel_undo_can_redo(&get_app(L)->undo)); return 1; }
 static int l_view_trigger_auto_depth(lua_State *L) { get_app(L)->req_auto_depth = true; return 0; }
 static int l_view_is_neural_depth(lua_State *L) { lua_pushboolean(L, get_app(L)->depth_is_neural); return 1; }
+static int l_view_show_depth(lua_State *L) { lua_pushboolean(L, get_app(L)->show_depth); return 1; }
+static int l_view_set_show_depth(lua_State *L) {
+    get_app(L)->show_depth = lua_toboolean(L, 1) != 0;
+    return 0;
+}
 static int l_view_sample_airlight(lua_State *L) {
     nebel_app_sample_airlight(get_app(L), (float)luaL_optnumber(L, 1, -1.0), (float)luaL_optnumber(L, 2, -1.0));
     return 0;
@@ -345,7 +350,8 @@ static void register_api(lua_State *L) {
         {"split_pos", l_view_split_pos}, {"set_split", l_view_set_split},
         {"undo", l_view_undo}, {"redo", l_view_redo}, {"can_undo", l_view_can_undo},
         {"can_redo", l_view_can_redo}, {"trigger_auto_depth", l_view_trigger_auto_depth},
-        {"is_neural_depth", l_view_is_neural_depth}, {"sample_airlight", l_view_sample_airlight},
+        {"is_neural_depth", l_view_is_neural_depth}, {"show_depth", l_view_show_depth},
+        {"set_show_depth", l_view_set_show_depth}, {"sample_airlight", l_view_sample_airlight},
         {"status", l_view_status}, {"set_status", l_view_set_status},
         {"canvas_rect", l_view_canvas_rect}, {NULL, NULL}
     };

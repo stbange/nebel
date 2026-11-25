@@ -25,9 +25,12 @@ typedef struct {
     GLuint tex_ping[2];
     GLuint fbo_bloom[2];
     GLuint tex_bloom[2];
+    GLuint fbo_amb[2];
+    GLuint tex_amb[2];
     int fbo_w;
     int fbo_h;
     bool use_half_float;
+    bool ambient_dirty;
 
     NebelFont font;
     char asset_root[256];

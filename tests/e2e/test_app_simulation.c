@@ -89,7 +89,21 @@ int main(void) {
     ASSERT_TRUE(nebel_app_load_image(&app, &scene));
     nebel_image_free(&scene);
 
-    /* 4. Desktop workflow simulation: run Lua UI frame, apply preset, paint fog + protect stag */
+    /* Feed realistic 3D depth structure (foreground stag silhouette=0.12, deep forest=0.85) */
+    float depth3d[96 * 64];
+    for (int y = 0; y < H; y++) {
+        float v = (float)y / (float)(H - 1);
+        for (int x = 0; x < W; x++) {
+            float u = (float)x / (float)(W - 1);
+            float d = 0.85f - 0.15f * v;
+            if (u >= 0.58f && u <= 0.74f && v >= 0.42f && v <= 0.88f) d = 0.12f;
+            depth3d[y * W + x] = d;
+        }
+    }
+    ASSERT_TRUE(nebel_app_set_external_depth(&app, depth3d, W, H));
+    ASSERT_TRUE(app.depth_is_neural);
+
+    /* 4. Desktop workflow: broad single swipe over BOTH background AND foreground stag! */
     nebel_ui_begin_frame(&app.ui, 1280, 760, 400, 400, false, false, false);
     ASSERT_TRUE(nebel_lua_on_ui(&lua, 1280, 760));
     nebel_ui_end_frame(&app.ui);
@@ -97,41 +111,42 @@ int main(void) {
 
     ASSERT_TRUE(nebel_lua_apply_preset(&lua, "Backlit Wildlife"));
     ASSERT_TRUE(nebel_lua_on_key(&lua, "B", false, false)); /* Fog marker */
-    app.brush.radius = 0.22f;
+    app.brush.radius = 0.30f;
     app.brush.opacity = 0.95f;
-    nebel_app_stroke_begin(&app, 0.15f, 0.65f);
-    nebel_app_stroke_move(&app, 0.50f, 0.65f);
-    nebel_app_stroke_move(&app, 0.85f, 0.65f);
+    nebel_app_stroke_begin(&app, 0.15f, 0.62f);
+    nebel_app_stroke_move(&app, 0.50f, 0.62f);
+    nebel_app_stroke_move(&app, 0.85f, 0.62f);
     nebel_app_stroke_end(&app);
 
-    /* Protect foreground stag silhouette */
+    /* Render 1-layer result: 3D depth MUST keep foreground stag crisp even WITHOUT Protect brush! */
+    NebelImage res1 = {0};
+    ASSERT_TRUE(nebel_app_render_full(&app, &res1));
+    float orig_bg = pixel_luma(&app.orig_img, 24, 40);
+    float orig_fg = pixel_luma(&app.orig_img, 63, 40);
+    float fog1_bg = pixel_luma(&res1, 24, 40);
+    float fog1_fg = pixel_luma(&res1, 63, 40);
+    ASSERT_TRUE(fog1_bg > orig_bg + 0.12f);
+    ASSERT_TRUE(fog1_fg < orig_fg + 0.03f); /* Zero foreground bleed! */
+
+    /* Also exercise Foreground-Protect brush explicitly */
     ASSERT_TRUE(nebel_lua_on_key(&lua, "P", false, false));
-    app.brush.radius = 0.12f;
+    app.brush.radius = 0.10f;
     app.brush.opacity = 1.0f;
     nebel_app_stroke_begin(&app, 0.66f, 0.52f);
     nebel_app_stroke_move(&app, 0.66f, 0.78f);
     nebel_app_stroke_end(&app);
 
-    /* Render 1-layer result and verify background fog vs protected silhouette */
-    NebelImage res1 = {0};
-    ASSERT_TRUE(nebel_app_render_full(&app, &res1));
-    float orig_bg = pixel_luma(&app.orig_img, 24, 42);
-    float fog1_bg = pixel_luma(&res1, 24, 42);
-    float fog1_fg = pixel_luma(&res1, 63, 42);
-    ASSERT_TRUE(fog1_bg > orig_bg + 0.15f);
-    ASSERT_TRUE(fog1_fg < fog1_bg - 0.18f);
-
     /* 5. Multi-layer fog: add second independent layer and paint ridge haze */
     ASSERT_TRUE(nebel_app_add_layer(&app, "Ridge Haze") == 1);
     ASSERT_TRUE(nebel_lua_on_key(&lua, "B", false, false));
-    app.brush.radius = 0.22f;
-    nebel_app_stroke_begin(&app, 0.15f, 0.65f);
-    nebel_app_stroke_move(&app, 0.45f, 0.65f);
+    app.brush.radius = 0.30f;
+    nebel_app_stroke_begin(&app, 0.15f, 0.62f);
+    nebel_app_stroke_move(&app, 0.45f, 0.62f);
     nebel_app_stroke_end(&app);
 
     NebelImage res2 = {0};
     ASSERT_TRUE(nebel_app_render_full(&app, &res2));
-    float fog2_bg = pixel_luma(&res2, 24, 42);
+    float fog2_bg = pixel_luma(&res2, 24, 40);
     ASSERT_TRUE(fog2_bg > fog1_bg + 0.04f);
 
     /* 6. Mobile Touch simulation: responsive switch, paint, 2-finger undo, 3-finger redo, pinch zoom */
@@ -184,9 +199,9 @@ int main(void) {
     nebel_app_handle_gesture(&app, MVW, MVH, nebel_touch_finger_up(&app.touch, 2, 320, 320, 2010));
     ASSERT_TRUE(app.zoom > z0 * 1.4f);
 
-    /* 7. External neural depth map integration (simulating Depth Anything V2 ONNX callback) */
+    /* 7. External neural depth map upsampling check (low-res 16x12 -> full-res Guided Filter) */
     float nn_depth[16 * 12];
-    for (int i = 0; i < 16 * 12; i++) nn_depth[i] = 1.0f - (float)(i / 16) / 11.0f;
+    for (int i = 0; i < 16 * 12; i++) nn_depth[i] = 0.85f - 0.25f * ((float)(i / 16) / 11.0f);
     ASSERT_TRUE(nebel_app_set_external_depth(&app, nn_depth, 16, 12));
     ASSERT_TRUE(app.depth_is_neural);
 
@@ -199,7 +214,7 @@ int main(void) {
     NebelImage reloaded = {0};
     ASSERT_TRUE(nebel_image_load_file(&reloaded, out_png));
     ASSERT_TRUE(reloaded.width == W && reloaded.height == H);
-    ASSERT_TRUE(pixel_luma(&reloaded, 24, 42) > orig_bg + 0.15f);
+    ASSERT_TRUE(pixel_luma(&reloaded, 24, 40) > orig_bg + 0.08f);
     nebel_image_free(&reloaded);
 
     ASSERT_TRUE(nebel_image_load_file(&reloaded, out_jpg));

@@ -104,6 +104,8 @@ static void destroy_fbos(NebelRenderer *r) {
         if (r->tex_ping[i])  { glDeleteTextures(1, &r->tex_ping[i]);      r->tex_ping[i] = 0; }
         if (r->fbo_bloom[i]) { glDeleteFramebuffers(1, &r->fbo_bloom[i]); r->fbo_bloom[i] = 0; }
         if (r->tex_bloom[i]) { glDeleteTextures(1, &r->tex_bloom[i]);     r->tex_bloom[i] = 0; }
+        if (r->fbo_amb[i])   { glDeleteFramebuffers(1, &r->fbo_amb[i]);   r->fbo_amb[i] = 0; }
+        if (r->tex_amb[i])   { glDeleteTextures(1, &r->tex_amb[i]);       r->tex_amb[i] = 0; }
     }
     r->fbo_w = 0;
     r->fbo_h = 0;
@@ -132,17 +134,22 @@ static void ensure_fbos(NebelRenderer *r, int w, int h) {
     destroy_fbos(r);
     int bw = w / 2 > 1 ? w / 2 : 1;
     int bh = h / 2 > 1 ? h / 2 : 1;
+    int aw = w / 4 > 1 ? w / 4 : 1;
+    int ah = h / 4 > 1 ? h / 4 : 1;
 
     r->use_half_float = true;
     if (!alloc_fbo_pair(r->fbo_ping, r->tex_ping, w, h, true) ||
-        !alloc_fbo_pair(r->fbo_bloom, r->tex_bloom, bw, bh, true)) {
+        !alloc_fbo_pair(r->fbo_bloom, r->tex_bloom, bw, bh, true) ||
+        !alloc_fbo_pair(r->fbo_amb, r->tex_amb, aw, ah, true)) {
         destroy_fbos(r);
         r->use_half_float = false;
         alloc_fbo_pair(r->fbo_ping, r->tex_ping, w, h, false);
         alloc_fbo_pair(r->fbo_bloom, r->tex_bloom, bw, bh, false);
+        alloc_fbo_pair(r->fbo_amb, r->tex_amb, aw, ah, false);
     }
     r->fbo_w = w;
     r->fbo_h = h;
+    r->ambient_dirty = true;
 }
 
 bool nebel_renderer_reload_shaders(NebelRenderer *r) {
@@ -288,6 +295,7 @@ static void sync_gpu_textures(NebelRenderer *r, NebelAppState *app) {
             }
         }
         app->dirty_photo_gpu = false;
+        r->ambient_dirty = true;
     }
 
     if (app->dirty_depth_gpu && app->depth_map) {
@@ -416,6 +424,29 @@ void nebel_renderer_draw(NebelRenderer *r, NebelAppState *app,
         int w = r->fbo_w;
         int h = r->fbo_h;
 
+        /* 0. Wide low-frequency scene ambient light map (recomputed only when photo changes) */
+        if (r->ambient_dirty) {
+            int aw = w / 4 > 1 ? w / 4 : 1;
+            int ah = h / 4 > 1 ? h / 4 : 1;
+            glUseProgram(r->prog_bloom);
+            glViewport(0, 0, aw, ah);
+            glUniform1i(glGetUniformLocation(r->prog_bloom, "u_tex"), 0);
+            glUniform1i(glGetUniformLocation(r->prog_bloom, "u_extract"), 0);
+            glUniform1f(glGetUniformLocation(r->prog_bloom, "u_spread"), 5.5f);
+
+            glBindFramebuffer(GL_FRAMEBUFFER, r->fbo_amb[0]);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, r->tex_photo);
+            glUniform2f(glGetUniformLocation(r->prog_bloom, "u_dir"), 1.0f / (float)aw, 0.0f);
+            draw_quad(r->prog_bloom, 0, 0, (float)aw, (float)ah, (float)aw, (float)ah, 0, 1, 1, 0);
+
+            glBindFramebuffer(GL_FRAMEBUFFER, r->fbo_amb[1]);
+            glBindTexture(GL_TEXTURE_2D, r->tex_amb[0]);
+            glUniform2f(glGetUniformLocation(r->prog_bloom, "u_dir"), 0.0f, 1.0f / (float)ah);
+            draw_quad(r->prog_bloom, 0, 0, (float)aw, (float)ah, (float)aw, (float)ah, 0, 1, 1, 0);
+            r->ambient_dirty = false;
+        }
+
         /* 1. Multi-layer ping-pong linear fog pass */
         GLuint cur_tex = r->tex_photo;
         int ping = 0;
@@ -427,8 +458,11 @@ void nebel_renderer_draw(NebelRenderer *r, NebelAppState *app,
         glUniform1i(glGetUniformLocation(r->prog_fog, "u_prev"), 0);
         glUniform1i(glGetUniformLocation(r->prog_fog, "u_depth"), 1);
         glUniform1i(glGetUniformLocation(r->prog_fog, "u_mask"), 2);
+        glUniform1i(glGetUniformLocation(r->prog_fog, "u_ambient"), 3);
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, r->tex_depth);
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, r->tex_amb[1]);
 
         for (int li = 0; li < app->layer_count; li++) {
             const NebelFogLayer *layer = &app->layers[li];
@@ -469,6 +503,7 @@ void nebel_renderer_draw(NebelRenderer *r, NebelAppState *app,
         glUseProgram(r->prog_bloom);
         glViewport(0, 0, bw, bh);
         glUniform1i(glGetUniformLocation(r->prog_bloom, "u_tex"), 0);
+        glUniform1f(glGetUniformLocation(r->prog_bloom, "u_spread"), 4.2f);
 
         glBindFramebuffer(GL_FRAMEBUFFER, r->fbo_bloom[0]);
         glActiveTexture(GL_TEXTURE0);
@@ -483,7 +518,7 @@ void nebel_renderer_draw(NebelRenderer *r, NebelAppState *app,
         glUniform1i(glGetUniformLocation(r->prog_bloom, "u_extract"), 0);
         draw_quad(r->prog_bloom, 0, 0, (float)bw, (float)bh, (float)bw, (float)bh, 0, 1, 1, 0);
 
-        /* 3. Final composite to default framebuffer (linear -> sRGB + split divider) */
+        /* 3. Final composite to default framebuffer (linear -> sRGB + split divider + depth view) */
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, fb_w, fb_h);
         glClearColor(0.055f, 0.062f, 0.074f, 1.0f);
@@ -495,13 +530,16 @@ void nebel_renderer_draw(NebelRenderer *r, NebelAppState *app,
         glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, r->tex_photo);
         glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, cur_tex);
         glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, r->tex_bloom[1]);
+        glActiveTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_2D, r->tex_depth);
         glUniform1i(glGetUniformLocation(r->prog_comp, "u_orig"), 0);
         glUniform1i(glGetUniformLocation(r->prog_comp, "u_fog"), 1);
         glUniform1i(glGetUniformLocation(r->prog_comp, "u_bloom"), 2);
+        glUniform1i(glGetUniformLocation(r->prog_comp, "u_depth"), 3);
         glUniform1f(glGetUniformLocation(r->prog_comp, "u_bloom_amount"), max_bloom);
         glUniform1f(glGetUniformLocation(r->prog_comp, "u_grain_sigma"), app->sensor_noise * max_grain);
         glUniform1f(glGetUniformLocation(r->prog_comp, "u_split_enabled"), app->split_enabled ? 1.0f : 0.0f);
         glUniform1f(glGetUniformLocation(r->prog_comp, "u_split_pos"), app->split_pos);
+        glUniform1f(glGetUniformLocation(r->prog_comp, "u_show_depth"), app->show_depth ? 1.0f : 0.0f);
         draw_quad(r->prog_comp, cx, cy, cw, ch, (float)vw, (float)vh, 0, 0, 1, 1);
     } else {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
