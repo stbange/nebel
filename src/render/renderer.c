@@ -962,8 +962,8 @@ bool nebel_renderer_render_full(NebelRenderer *r, NebelAppState *app, NebelImage
             if (bloom_px && fa > 1e-4f) {
                 int bx_i = (int)(u * (float)(bw - 1) + 0.5f);
                 const float *bl = &bloom_px[((size_t)by_i * (size_t)bw + (size_t)bx_i) * 4u];
-                float t_d = clampf_r((d_here - 0.22f) / 0.40f, 0.0f, 1.0f);
-                float d_psf = 0.45f + 0.55f * (t_d * t_d * (3.0f - 2.0f * t_d));
+                float t_d = clampf_r((d_here - 0.20f) / 0.40f, 0.0f, 1.0f);
+                float d_psf = 0.68f + 0.32f * (t_d * t_d * (3.0f - 2.0f * t_d));
                 float gain = fa * max_bloom * d_psf * 0.75f;
                 px[0] += bl[0] * gain;
                 px[1] += bl[1] * gain;

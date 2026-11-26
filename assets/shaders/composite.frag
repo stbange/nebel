@@ -48,7 +48,7 @@ void main() {
     vec3 bloom = texture(u_bloom, v_uv).rgb;
 
     /* Depth-weighted atmospheric PSF halation */
-    float depth_w_psf = 0.45 + 0.55 * smoothstep(0.22, 0.62, d_here);
+    float depth_w_psf = 0.68 + 0.32 * smoothstep(0.20, 0.60, d_here);
     vec3 col = fog.rgb + bloom * (fog.a * u_bloom_amount * depth_w_psf * 0.75);
 
     /* Volumetric crepuscular sunbeams occluded by foreground 3D depth */
