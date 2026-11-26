@@ -302,6 +302,23 @@ static void test_brush_and_fog_module(void) {
     CHECK(mask[24 * 64 + 32] < before_erase);
     nebel_brush_stamp(NULL, 64, 48, 10, 10, 5, 0.5f, 0.5f, false);
 
+    /* Adjustable soft edge: softness=0.0 stays crisp near rim; softness=1.0 feathers smoothly on paint & erase */
+    uint8_t m_hard[64 * 48], m_soft[64 * 48];
+    memset(m_hard, 0, sizeof(m_hard));
+    memset(m_soft, 0, sizeof(m_soft));
+    nebel_brush_stamp(m_hard, 64, 48, 32.0f, 24.0f, 12.0f, 1.0f, 0.0f, false);
+    nebel_brush_stamp(m_soft, 64, 48, 32.0f, 24.0f, 12.0f, 1.0f, 1.0f, false);
+    CHECK(m_hard[24 * 64 + 41] == 255);                      /* Hard edge stays full strength at r=9.5/12 */
+    CHECK(m_soft[24 * 64 + 32] > m_soft[24 * 64 + 37]);      /* Soft paint tapers smoothly center -> mid */
+    CHECK(m_soft[24 * 64 + 37] > m_soft[24 * 64 + 41]);      /* Soft paint tapers smoothly mid -> outer rim */
+    CHECK(m_soft[24 * 64 + 41] < 40);
+    /* Soft eraser tapers cleanly without a sharp ring */
+    memset(m_soft, 255, sizeof(m_soft));
+    nebel_brush_stamp(m_soft, 64, 48, 32.0f, 24.0f, 12.0f, 1.0f, 1.0f, true);
+    CHECK(m_soft[24 * 64 + 32] < m_soft[24 * 64 + 37]);
+    CHECK(m_soft[24 * 64 + 37] < m_soft[24 * 64 + 41]);
+    CHECK(m_soft[24 * 64 + 41] > 215);
+
     /* Fog params clamp & math */
     NebelFogParams fp;
     nebel_fog_params_default(&fp);

@@ -52,7 +52,8 @@ void nebel_brush_stamp(uint8_t *mask, int w, int h,
             float falloff = 1.0f;
             if (dist > inner && denom > 1e-4f) {
                 float t = clampf((dist - inner) / denom, 0.0f, 1.0f);
-                falloff = 1.0f - (t * t * (3.0f - 2.0f * t));
+                float smooth = 1.0f - (t * t * (3.0f - 2.0f * t));
+                falloff = powf(smooth, 1.0f + softness * 1.25f);
             }
             float a = falloff * opacity;
             uint8_t *cell = &mask[(size_t)y * (size_t)w + (size_t)x];

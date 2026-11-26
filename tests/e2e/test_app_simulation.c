@@ -290,6 +290,13 @@ int main(void) {
     ASSERT_TRUE(nebel_lua_on_key(&lua, "F1", false, false));
     ASSERT_TRUE(strstr(app.req_open_url, "help.html?lang=en") != NULL);
 
+    /* Adjustable brush soft edge via Shift+[ and Shift+] */
+    app.brush.softness = 0.50f;
+    ASSERT_TRUE(nebel_lua_on_key(&lua, "[", false, true));
+    ASSERT_TRUE(app.brush.softness < 0.45f);
+    ASSERT_TRUE(nebel_lua_on_key(&lua, "]", false, true));
+    ASSERT_TRUE(app.brush.softness > 0.48f);
+
     free(before_touch);
     nebel_image_free(&res1);
     nebel_image_free(&res2);

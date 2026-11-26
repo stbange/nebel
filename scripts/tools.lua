@@ -62,8 +62,18 @@ function M.handle_key(key, ctrl, shift)
         local cur = nebel.layers.get(idx, "noise_seed") or 1337
         nebel.layers.set(idx, "noise_seed", ((cur * 1664525 + 1013904223) % 9000) + 1)
         nebel.view.set_status(i18n.t("status_seed"))
-    elseif key == "[" then nebel.brush.set_radius(nebel.brush.get_radius() * 0.82)
-    elseif key == "]" then nebel.brush.set_radius(nebel.brush.get_radius() * 1.22)
+    elseif key == "[" then
+        if shift then
+            nebel.brush.set_softness(math.max(0.0, nebel.brush.get_softness() - 0.10))
+        else
+            nebel.brush.set_radius(nebel.brush.get_radius() * 0.82)
+        end
+    elseif key == "]" then
+        if shift then
+            nebel.brush.set_softness(math.min(1.0, nebel.brush.get_softness() + 0.10))
+        else
+            nebel.brush.set_radius(nebel.brush.get_radius() * 1.22)
+        end
     elseif key == "SPACE" then
         nebel.view.set_split(not nebel.view.split_enabled())
     elseif key == "0" then nebel.view.reset()

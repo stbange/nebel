@@ -37,6 +37,7 @@ return {
     tool_depth_far = "Ferner",
     sl_brush_size = "Pinselgröße",
     sl_opacity = "Deckkraft",
+    sl_softness = "Weiche Kante",
 
     sec_layers = "NEBEL-EBENEN",
     btn_add_layer = "+ Neu",
@@ -109,6 +110,7 @@ return {
     tip_tool_dfar = "Tiefe ferner (F): Bereich weiter in den Hintergrund schieben",
     tip_brush_size = "Pinselgröße einstellen (Tasten [ und ])",
     tip_opacity = "Deckkraft des Markers",
+    tip_softness = "Weiche Kante beim Malen & Löschen von Nebel (0 = hart, 1 = sehr weich; Umschalt+[ / ])",
     tip_add_layer = "Weitere unabhängige Nebel-Ebene hinzufügen (bis zu 8)",
     tip_seed = "Zufällige neue Nebelschwaden und Lücken erzeugen (R)",
     tip_skytint = "Himmelsfarbe aus dem Foto als natürliche Nebelfarbe übernehmen",
