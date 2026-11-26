@@ -28,13 +28,11 @@ static void record_lua_error(NebelLuaBridge *bridge) {
 
 /* ---- nebel.layers ---- */
 static int l_layers_count(lua_State *L) {
-    NebelAppState *app = get_app(L);
-    lua_pushinteger(L, app->layer_count);
+    lua_pushinteger(L, get_app(L)->layer_count);
     return 1;
 }
 static int l_layers_active(lua_State *L) {
-    NebelAppState *app = get_app(L);
-    lua_pushinteger(L, app->active_layer + 1);
+    lua_pushinteger(L, get_app(L)->active_layer + 1);
     return 1;
 }
 static int l_layers_name(lua_State *L) {
@@ -96,10 +94,12 @@ static int l_layers_clear(lua_State *L) {
 /* ---- nebel.brush ---- */
 static const char *tool_to_str(NebelTool t) {
     switch (t) {
-    case NEBEL_TOOL_ERASER: return "eraser";
-    case NEBEL_TOOL_PROTECT: return "protect";
-    case NEBEL_TOOL_SUN: return "sun";
-    default: return "fog";
+    case NEBEL_TOOL_ERASER:     return "eraser";
+    case NEBEL_TOOL_PROTECT:    return "protect";
+    case NEBEL_TOOL_SUN:        return "sun";
+    case NEBEL_TOOL_DEPTH_NEAR: return "depth_near";
+    case NEBEL_TOOL_DEPTH_FAR:  return "depth_far";
+    default:                    return "fog";
     }
 }
 static int l_brush_get_tool(lua_State *L) {
@@ -113,6 +113,8 @@ static int l_brush_set_tool(lua_State *L) {
     else if (strcmp(s, "eraser") == 0) app->active_tool = NEBEL_TOOL_ERASER;
     else if (strcmp(s, "protect") == 0) app->active_tool = NEBEL_TOOL_PROTECT;
     else if (strcmp(s, "sun") == 0) app->active_tool = NEBEL_TOOL_SUN;
+    else if (strcmp(s, "depth_near") == 0) app->active_tool = NEBEL_TOOL_DEPTH_NEAR;
+    else if (strcmp(s, "depth_far") == 0) app->active_tool = NEBEL_TOOL_DEPTH_FAR;
     else { lua_pushboolean(L, 0); return 1; }
     lua_pushboolean(L, 1);
     return 1;
@@ -206,11 +208,22 @@ static int l_view_undo(lua_State *L) { lua_pushboolean(L, nebel_app_undo(get_app
 static int l_view_redo(lua_State *L) { lua_pushboolean(L, nebel_app_redo(get_app(L))); return 1; }
 static int l_view_can_undo(lua_State *L) { lua_pushboolean(L, nebel_undo_can_undo(&get_app(L)->undo)); return 1; }
 static int l_view_can_redo(lua_State *L) { lua_pushboolean(L, nebel_undo_can_redo(&get_app(L)->undo)); return 1; }
-static int l_view_trigger_auto_depth(lua_State *L) { get_app(L)->req_auto_depth = true; return 0; }
+static int l_view_trigger_auto_depth(lua_State *L) {
+    NebelAppState *app = get_app(L);
+    app->req_hd_depth = true;
+    app->req_auto_depth = true;
+    return 0;
+}
 static int l_view_is_neural_depth(lua_State *L) { lua_pushboolean(L, get_app(L)->depth_is_neural); return 1; }
+static int l_view_is_hd_depth(lua_State *L) { lua_pushboolean(L, get_app(L)->depth_is_hd); return 1; }
 static int l_view_show_depth(lua_State *L) { lua_pushboolean(L, get_app(L)->show_depth); return 1; }
 static int l_view_set_show_depth(lua_State *L) {
     get_app(L)->show_depth = lua_toboolean(L, 1) != 0;
+    return 0;
+}
+static int l_view_show_mask(lua_State *L) { lua_pushboolean(L, get_app(L)->show_mask_overlay); return 1; }
+static int l_view_set_show_mask(lua_State *L) {
+    get_app(L)->show_mask_overlay = lua_toboolean(L, 1) != 0;
     return 0;
 }
 static int l_view_sample_airlight(lua_State *L) {
@@ -225,6 +238,80 @@ static int l_view_canvas_rect(lua_State *L) {
     nebel_app_canvas_rect(app, app->ui.viewport_w, app->ui.viewport_h, &x, &y, &w, &h);
     lua_pushnumber(L, x); lua_pushnumber(L, y); lua_pushnumber(L, w); lua_pushnumber(L, h);
     return 4;
+}
+
+/* ---- nebel.render ---- */
+static const char *phase_to_str(NebelRenderPhase p) {
+    switch (p) {
+    case NEBEL_PHASE_DEPTH:     return "depth";
+    case NEBEL_PHASE_FLUID:     return "fluid";
+    case NEBEL_PHASE_RENDERING: return "rendering";
+    case NEBEL_PHASE_DONE:      return "done";
+    default:                    return "mark";
+    }
+}
+static const char *quality_to_str(NebelQualityPreset q) {
+    switch (q) {
+    case NEBEL_QUALITY_FAST:  return "fast";
+    case NEBEL_QUALITY_ULTRA: return "ultra";
+    default:                  return "studio";
+    }
+}
+static int l_render_start(lua_State *L) { nebel_app_render_start(get_app(L)); return 0; }
+static int l_render_cancel(lua_State *L) { nebel_app_render_cancel(get_app(L)); return 0; }
+static int l_render_phase(lua_State *L) { lua_pushstring(L, phase_to_str(get_app(L)->render_phase)); return 1; }
+static int l_render_is_dirty(lua_State *L) { lua_pushboolean(L, get_app(L)->render_dirty); return 1; }
+static int l_render_progress(lua_State *L) { lua_pushnumber(L, get_app(L)->render_progress); return 1; }
+static int l_render_samples(lua_State *L) {
+    NebelAppState *app = get_app(L);
+    lua_pushinteger(L, app->render_samples_done);
+    lua_pushinteger(L, app->render_samples_total);
+    return 2;
+}
+static int l_render_quality(lua_State *L) { lua_pushstring(L, quality_to_str(get_app(L)->quality)); return 1; }
+static int l_render_set_quality(lua_State *L) {
+    NebelAppState *app = get_app(L);
+    const char *q = luaL_checkstring(L, 1);
+    if (strcmp(q, "fast") == 0) nebel_app_set_quality(app, NEBEL_QUALITY_FAST);
+    else if (strcmp(q, "ultra") == 0) nebel_app_set_quality(app, NEBEL_QUALITY_ULTRA);
+    else if (strcmp(q, "studio") == 0) nebel_app_set_quality(app, NEBEL_QUALITY_STUDIO);
+    else { lua_pushboolean(L, 0); return 1; }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+/* ---- nebel.platform ---- */
+static const char *tier_to_str(NebelPlatformTier t) {
+    switch (t) {
+    case NEBEL_TIER_WEB_DESKTOP: return "web_desktop";
+    case NEBEL_TIER_WEB_MOBILE:  return "web_mobile";
+    default:                     return "desktop";
+    }
+}
+static int l_platform_tier(lua_State *L) { lua_pushstring(L, tier_to_str(get_app(L)->platform_tier)); return 1; }
+static int l_platform_set_tier(lua_State *L) {
+    NebelAppState *app = get_app(L);
+    const char *t = luaL_checkstring(L, 1);
+    if (strcmp(t, "desktop") == 0) nebel_app_set_platform_tier(app, NEBEL_TIER_DESKTOP);
+    else if (strcmp(t, "web_desktop") == 0) nebel_app_set_platform_tier(app, NEBEL_TIER_WEB_DESKTOP);
+    else if (strcmp(t, "web_mobile") == 0) nebel_app_set_platform_tier(app, NEBEL_TIER_WEB_MOBILE);
+    else { lua_pushboolean(L, 0); return 1; }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+static int l_platform_gpu_backend(lua_State *L) { lua_pushstring(L, get_app(L)->gpu_backend); return 1; }
+static int l_platform_lang(lua_State *L) { lua_pushstring(L, get_app(L)->lang); return 1; }
+static int l_platform_set_lang(lua_State *L) {
+    nebel_app_set_lang(get_app(L), luaL_checkstring(L, 1));
+    return 0;
+}
+static int l_platform_open_help(lua_State *L) {
+    NebelAppState *app = get_app(L);
+    const char *lang = luaL_optstring(L, 1, app->lang);
+    snprintf(app->req_open_url, sizeof(app->req_open_url),
+             "https://stbange.github.io/nebel/help.html?lang=%.4s",
+             (lang && lang[0]) ? lang : "en");
+    return 0;
 }
 
 /* ---- nebel.io ---- */
@@ -294,6 +381,21 @@ static int l_ui_button(lua_State *L) {
     lua_pushboolean(L, clicked);
     return 1;
 }
+static int l_ui_accent_button(lua_State *L) {
+    NebelAppState *app = get_app(L);
+    uint32_t id = (uint32_t)luaL_checkinteger(L, 1);
+    float x = (float)luaL_checknumber(L, 2);
+    float y = (float)luaL_checknumber(L, 3);
+    float w = (float)luaL_checknumber(L, 4);
+    float h = (float)luaL_checknumber(L, 5);
+    const char *label = luaL_optstring(L, 6, "");
+    bool pulsing = lua_toboolean(L, 7) != 0;
+    int icon_id = (int)luaL_optinteger(L, 8, -1);
+    bool clicked = nebel_ui_accent_button(&app->ui, id, x, y, w, h, label, pulsing, icon_id);
+    if (clicked) nebel_app_queue_audio(app, "assets/sounds/ui_click.wav", 0.45f);
+    lua_pushboolean(L, clicked);
+    return 1;
+}
 static int l_ui_slider(lua_State *L) {
     NebelAppState *app = get_app(L);
     uint32_t id = (uint32_t)luaL_checkinteger(L, 1);
@@ -309,6 +411,29 @@ static int l_ui_slider(lua_State *L) {
     lua_pushnumber(L, (lua_Number)val);
     lua_pushboolean(L, changed);
     return 2;
+}
+static int l_ui_progress_bar(lua_State *L) {
+    NebelAppState *app = get_app(L);
+    nebel_ui_progress_bar(&app->ui,
+        (float)luaL_checknumber(L, 1), (float)luaL_checknumber(L, 2),
+        (float)luaL_checknumber(L, 3), (float)luaL_checknumber(L, 4),
+        (float)luaL_checknumber(L, 5), luaL_optstring(L, 6, ""));
+    return 0;
+}
+static int l_ui_tooltip(lua_State *L) {
+    nebel_ui_tooltip(&get_app(L)->ui, luaL_checkstring(L, 1));
+    return 0;
+}
+static int l_ui_last_hovered(lua_State *L) {
+    lua_pushboolean(L, get_app(L)->ui.last_hovered);
+    return 1;
+}
+static int l_ui_set_modal(lua_State *L) {
+    NebelAppState *app = get_app(L);
+    bool active = lua_toboolean(L, 1) != 0;
+    app->ui.modal_active = active;
+    if (active) app->ui.pointer_over_ui = true;
+    return 0;
 }
 static int l_ui_is_touch_mode(lua_State *L) { lua_pushboolean(L, get_app(L)->touch.touch_mode); return 1; }
 static int l_ui_viewport_size(lua_State *L) {
@@ -361,10 +486,25 @@ static void register_api(lua_State *L) {
         {"split_pos", l_view_split_pos}, {"set_split", l_view_set_split},
         {"undo", l_view_undo}, {"redo", l_view_redo}, {"can_undo", l_view_can_undo},
         {"can_redo", l_view_can_redo}, {"trigger_auto_depth", l_view_trigger_auto_depth},
-        {"is_neural_depth", l_view_is_neural_depth}, {"show_depth", l_view_show_depth},
-        {"set_show_depth", l_view_set_show_depth}, {"sample_airlight", l_view_sample_airlight},
+        {"is_neural_depth", l_view_is_neural_depth}, {"is_hd_depth", l_view_is_hd_depth},
+        {"show_depth", l_view_show_depth}, {"set_show_depth", l_view_set_show_depth},
+        {"show_mask", l_view_show_mask}, {"set_show_mask", l_view_set_show_mask},
+        {"sample_airlight", l_view_sample_airlight},
         {"status", l_view_status}, {"set_status", l_view_set_status},
         {"canvas_rect", l_view_canvas_rect}, {NULL, NULL}
+    };
+    static const luaL_Reg render_fn[] = {
+        {"start", l_render_start}, {"cancel", l_render_cancel},
+        {"phase", l_render_phase}, {"is_dirty", l_render_is_dirty},
+        {"progress", l_render_progress}, {"samples", l_render_samples},
+        {"quality", l_render_quality}, {"set_quality", l_render_set_quality},
+        {NULL, NULL}
+    };
+    static const luaL_Reg platform_fn[] = {
+        {"tier", l_platform_tier}, {"set_tier", l_platform_set_tier},
+        {"gpu_backend", l_platform_gpu_backend},
+        {"lang", l_platform_lang}, {"set_lang", l_platform_set_lang},
+        {"open_help", l_platform_open_help}, {NULL, NULL}
     };
     static const luaL_Reg io_fn[] = {
         {"open_photo", l_io_open_photo}, {"load_sample", l_io_load_sample},
@@ -374,7 +514,10 @@ static void register_api(lua_State *L) {
     };
     static const luaL_Reg ui_fn[] = {
         {"panel", l_ui_panel}, {"label", l_ui_label}, {"ring", l_ui_ring},
-        {"button", l_ui_button}, {"slider", l_ui_slider},
+        {"button", l_ui_button}, {"accent_button", l_ui_accent_button},
+        {"slider", l_ui_slider}, {"progress_bar", l_ui_progress_bar},
+        {"tooltip", l_ui_tooltip}, {"last_hovered", l_ui_last_hovered},
+        {"set_modal", l_ui_set_modal},
         {"is_touch_mode", l_ui_is_touch_mode}, {"viewport_size", l_ui_viewport_size},
         {"pointer_over_ui", l_ui_pointer_over_ui}, {"pointer_pos", l_ui_pointer_pos},
         {NULL, NULL}
@@ -385,12 +528,14 @@ static void register_api(lua_State *L) {
     };
 
     lua_newtable(L);
-    register_subtable(L, "layers", layers_fn);
-    register_subtable(L, "brush",  brush_fn);
-    register_subtable(L, "view",   view_fn);
-    register_subtable(L, "io",     io_fn);
-    register_subtable(L, "ui",     ui_fn);
-    register_subtable(L, "audio",  audio_fn);
+    register_subtable(L, "layers",   layers_fn);
+    register_subtable(L, "brush",    brush_fn);
+    register_subtable(L, "view",     view_fn);
+    register_subtable(L, "render",   render_fn);
+    register_subtable(L, "platform", platform_fn);
+    register_subtable(L, "io",       io_fn);
+    register_subtable(L, "ui",       ui_fn);
+    register_subtable(L, "audio",    audio_fn);
     lua_setglobal(L, "nebel");
 }
 
@@ -403,7 +548,6 @@ bool nebel_lua_init(NebelLuaBridge *bridge, NebelAppState *app) {
     if (!L) return false;
     bridge->L = L;
 
-    /* Open safe subset of standard libraries (no os/io shell execution) */
     luaL_requiref(L, "_G", luaopen_base, 1); lua_pop(L, 1);
     luaL_requiref(L, LUA_TABLIBNAME, luaopen_table, 1); lua_pop(L, 1);
     luaL_requiref(L, LUA_STRLIBNAME, luaopen_string, 1); lua_pop(L, 1);
@@ -411,7 +555,6 @@ bool nebel_lua_init(NebelLuaBridge *bridge, NebelAppState *app) {
     luaL_requiref(L, LUA_UTF8LIBNAME, luaopen_utf8, 1); lua_pop(L, 1);
     luaL_requiref(L, LUA_LOADLIBNAME, luaopen_package, 1); lua_pop(L, 1);
 
-    /* Restrict package.path to external scripts/ folder beside the binary */
     char path_expr[384];
     snprintf(path_expr, sizeof(path_expr), "%s/scripts/?.lua", app->asset_root);
     lua_getglobal(L, "package");
@@ -453,7 +596,6 @@ bool nebel_lua_load_file(NebelLuaBridge *bridge, const char *rel_path) {
 
 bool nebel_lua_reload(NebelLuaBridge *bridge) {
     if (!bridge || !bridge->L) return false;
-    /* Clear cached Lua modules so external edits reload cleanly */
     lua_getglobal(bridge->L, "package");
     lua_newtable(bridge->L);
     lua_setfield(bridge->L, -2, "loaded");

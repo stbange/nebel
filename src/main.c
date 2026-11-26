@@ -11,10 +11,19 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #if defined(__EMSCRIPTEN__)
 #include <emscripten.h>
 #include <emscripten/html5.h>
+
+EM_JS(void, nebel_js_init_env, (void), {
+    if (window.nebelWebInitEnv) window.nebelWebInitEnv();
+});
+
+EM_JS(void, nebel_js_open_url, (const char *url), {
+    if (url) window.open(UTF8ToString(url), "_blank", "noopener");
+});
 #endif
 
 typedef struct {
@@ -38,6 +47,9 @@ static const char *map_key_name(SDL_Keycode key) {
     case SDLK_B: return "B";
     case SDLK_D: return "D";
     case SDLK_E: return "E";
+    case SDLK_F: return "F";
+    case SDLK_M: return "M";
+    case SDLK_N: return "N";
     case SDLK_P: return "P";
     case SDLK_R: return "R";
     case SDLK_S: return "S";
@@ -46,8 +58,12 @@ static const char *map_key_name(SDL_Keycode key) {
     case SDLK_0: return "0";
     case SDLK_LEFTBRACKET:  return "[";
     case SDLK_RIGHTBRACKET: return "]";
-    case SDLK_SPACE: return "SPACE";
-    case SDLK_F5:    return "F5";
+    case SDLK_SPACE:        return "SPACE";
+    case SDLK_RETURN:
+    case SDLK_KP_ENTER:     return "ENTER";
+    case SDLK_ESCAPE:       return "ESC";
+    case SDLK_F1:           return "F1";
+    case SDLK_F5:           return "F5";
     default: return NULL;
     }
 }
@@ -87,7 +103,7 @@ static void handle_events(NebelRuntime *rt, int vw, int vh) {
                 if (u < 0.05f) u = 0.05f;
                 if (u > 0.95f) u = 0.95f;
                 rt->app.split_pos = u;
-            } else if (rt->app.stroke_in_progress && !rt->app.touch.touch_mode) {
+            } else if (rt->app.stroke_in_progress && !rt->app.touch.touch_mode && !rt->app.ui.modal_active) {
                 float u = 0.0f, v = 0.0f;
                 nebel_app_screen_to_photo(&rt->app, vw, vh, rt->mouse_x, rt->mouse_y, &u, &v);
                 nebel_app_stroke_move(&rt->app, u, v);
@@ -99,13 +115,12 @@ static void handle_events(NebelRuntime *rt, int vw, int vh) {
             rt->mouse_x = ev.button.x;
             rt->mouse_y = ev.button.y;
             if (ev.button.button == SDL_BUTTON_MIDDLE || ev.button.button == SDL_BUTTON_RIGHT) {
-                rt->pan_dragging = true;
+                if (!rt->app.ui.modal_active) rt->pan_dragging = true;
             } else if (ev.button.button == SDL_BUTTON_LEFT) {
                 rt->mouse_down = true;
                 rt->mouse_pressed = true;
-                /* Check split divider drag before starting a paint stroke */
                 float u = 0.0f, v = 0.0f;
-                if (!rt->app.ui.pointer_over_ui &&
+                if (!rt->app.ui.pointer_over_ui && !rt->app.ui.modal_active &&
                     nebel_app_screen_to_photo(&rt->app, vw, vh, rt->mouse_x, rt->mouse_y, &u, &v)) {
                     if (rt->app.split_enabled && fabsf(u - rt->app.split_pos) < 0.03f) {
                         rt->split_dragging = true;
@@ -134,11 +149,13 @@ static void handle_events(NebelRuntime *rt, int vw, int vh) {
         }
 
         case SDL_EVENT_MOUSE_WHEEL: {
-            float factor = ev.wheel.y > 0 ? 1.12f : (ev.wheel.y < 0 ? 0.89f : 1.0f);
-            float z = rt->app.zoom * factor;
-            if (z < 0.25f) z = 0.25f;
-            if (z > 8.0f) z = 8.0f;
-            rt->app.zoom = z;
+            if (!rt->app.ui.modal_active) {
+                float factor = ev.wheel.y > 0 ? 1.12f : (ev.wheel.y < 0 ? 0.89f : 1.0f);
+                float z = rt->app.zoom * factor;
+                if (z < 0.25f) z = 0.25f;
+                if (z > 8.0f) z = 8.0f;
+                rt->app.zoom = z;
+            }
             break;
         }
 
@@ -147,6 +164,7 @@ static void handle_events(NebelRuntime *rt, int vw, int vh) {
             float fy = ev.tfinger.y * (float)vh;
             rt->mouse_x = fx; rt->mouse_y = fy;
             rt->mouse_down = true; rt->mouse_pressed = true;
+            if (rt->app.ui.modal_active) break;
             float u = 0.0f, v = 0.0f;
             if (rt->app.split_enabled && !rt->app.ui.pointer_over_ui &&
                 nebel_app_screen_to_photo(&rt->app, vw, vh, fx, fy, &u, &v) &&
@@ -164,6 +182,7 @@ static void handle_events(NebelRuntime *rt, int vw, int vh) {
             float fx = ev.tfinger.x * (float)vw;
             float fy = ev.tfinger.y * (float)vh;
             rt->mouse_x = fx; rt->mouse_y = fy;
+            if (rt->app.ui.modal_active) break;
             if (rt->split_dragging) {
                 float u = 0.5f, v = 0.5f;
                 nebel_app_screen_to_photo(&rt->app, vw, vh, fx, fy, &u, &v);
@@ -187,6 +206,7 @@ static void handle_events(NebelRuntime *rt, int vw, int vh) {
                 rt->split_dragging = false;
                 break;
             }
+            if (rt->app.ui.modal_active) break;
             NebelGestureAction act = nebel_touch_finger_up(
                 &rt->app.touch, (int64_t)ev.tfinger.fingerID, fx, fy, SDL_GetTicks());
             nebel_app_handle_gesture(&rt->app, vw, vh, act);
@@ -229,9 +249,24 @@ static void frame_tick(void *userdata) {
     nebel_lua_on_ui(&rt->lua, vw, vh);
     nebel_ui_end_frame(&rt->app.ui);
 
-    /* If user clicked inside a UI widget on press, cancel any accidental canvas stroke */
-    if (rt->app.ui.pointer_over_ui && rt->mouse_pressed && rt->app.stroke_in_progress) {
+    if ((rt->app.ui.pointer_over_ui || rt->app.ui.modal_active) &&
+        rt->mouse_pressed && rt->app.stroke_in_progress) {
         nebel_app_stroke_cancel(&rt->app);
+    }
+
+    if (rt->app.req_open_url[0]) {
+#if defined(__EMSCRIPTEN__)
+        nebel_js_open_url(rt->app.req_open_url);
+#else
+        if (!SDL_OpenURL(rt->app.req_open_url)) {
+            /* Fallback to local offline help.html beside binary */
+            char local_url[512];
+            snprintf(local_url, sizeof(local_url), "file://%s/assets/help/index.html?lang=%s",
+                     rt->app.asset_root, rt->app.lang);
+            SDL_OpenURL(local_url);
+        }
+#endif
+        rt->app.req_open_url[0] = '\0';
     }
 
     if (rt->app.req_reload_scripts) {
@@ -246,7 +281,7 @@ static void frame_tick(void *userdata) {
         nebel_app_compute_classical_depth(&rt->app);
     }
 
-    nebel_file_dialog_poll(&rt->app, rt->window);
+    nebel_file_dialog_poll(&rt->app, rt->window, &rt->renderer);
     nebel_depth_onnx_poll(&rt->app);
     nebel_audio_flush(&rt->audio, &rt->app);
 
@@ -306,7 +341,6 @@ int main(int argc, char **argv) {
 #endif
     SDL_GL_SetSwapInterval(1);
 
-    /* Resolve loose external assets/ and scripts/ directory beside binary */
     const char *base_path = SDL_GetBasePath();
     const char *asset_root = ".";
 #if !defined(__EMSCRIPTEN__)
@@ -327,6 +361,26 @@ int main(int argc, char **argv) {
     nebel_file_dialog_init(&rt->app);
     nebel_depth_onnx_init(&rt->app);
     nebel_audio_init(&rt->audio);
+
+#if defined(__EMSCRIPTEN__)
+    nebel_js_init_env();
+#else
+    /* Auto-detect OS preferred language (German / Polish / English) on Desktop */
+    {
+        int nloc = 0;
+        SDL_Locale **locs = SDL_GetPreferredLocales(&nloc);
+        if (locs) {
+            for (int i = 0; i < nloc; i++) {
+                if (locs[i] && locs[i]->language) {
+                    if (strncmp(locs[i]->language, "de", 2) == 0) { nebel_app_set_lang(&rt->app, "de"); break; }
+                    if (strncmp(locs[i]->language, "pl", 2) == 0) { nebel_app_set_lang(&rt->app, "pl"); break; }
+                    if (strncmp(locs[i]->language, "en", 2) == 0) { nebel_app_set_lang(&rt->app, "en"); break; }
+                }
+            }
+            SDL_free(locs);
+        }
+    }
+#endif
 
     if (!nebel_renderer_init(&rt->renderer, rt->app.asset_root)) {
         fprintf(stderr, "[nebel] renderer init failed\n");

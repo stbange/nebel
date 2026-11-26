@@ -63,8 +63,12 @@ jobs:
         run: |
           if [ -d build/Release ]; then OUT=build/Release; else OUT=build; fi
           test -f "$OUT/scripts/main.lua"
+          test -f "$OUT/scripts/locales/de.lua"
+          test -f "$OUT/scripts/locales/pl.lua"
           test -f "$OUT/assets/manifest.json"
           test -f "$OUT/assets/shaders/fog_layer.frag"
+          test -f "$OUT/assets/shaders/fluid_advect.frag"
+          test -f "$OUT/assets/help/index.html"
 
   build-web:
     name: Web Build (Emscripten)
@@ -86,8 +90,11 @@ jobs:
           emcmake cmake -G Ninja -B build-web -DCMAKE_BUILD_TYPE=Release
           cmake --build build-web --parallel
           test -f build-web/dist/index.html
+          test -f build-web/dist/help.html
           test -f build-web/dist/nebel.wasm
           test -f build-web/dist/scripts/main.lua
+          test -f build-web/dist/scripts/locales/de.lua
+          test -f build-web/dist/scripts/locales/pl.lua
           test -f build-web/dist/assets/manifest.json
 
       - name: Setup Pages

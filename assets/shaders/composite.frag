@@ -1,15 +1,20 @@
 in vec2 v_uv;
 out vec4 frag_color;
 
-uniform sampler2D u_orig;  /* Original linear photo */
-uniform sampler2D u_fog;   /* Fogged linear RGB + fog opacity in .a */
-uniform sampler2D u_bloom; /* Blurred highlight veiling glare */
-uniform sampler2D u_depth; /* Normalized 3D depth map */
+uniform sampler2D u_orig;      /* Original linear photo */
+uniform sampler2D u_fog;       /* Fogged linear RGB + fog opacity in .a */
+uniform sampler2D u_bloom;     /* Blurred highlight veiling glare */
+uniform sampler2D u_depth;     /* Normalized 3D depth map */
+uniform sampler2D u_mask_vis;  /* Active layer painted mask for Mark Mode overlay */
+uniform sampler2D u_prot_vis;  /* Protected foreground mask for Mark Mode overlay */
+
 uniform float u_bloom_amount;
 uniform float u_grain_sigma;
 uniform float u_split_enabled;
 uniform float u_split_pos;
 uniform float u_show_depth;
+uniform float u_show_mask;
+uniform float u_mask_depth_min;
 uniform vec2  u_sun_pos;
 uniform float u_god_rays;
 
@@ -27,13 +32,13 @@ float hash12(vec2 p) {
 }
 
 void main() {
+    float d_here = texture(u_depth, v_uv).r;
+
     if (u_show_depth > 0.5) {
-        float d = texture(u_depth, v_uv).r;
-        /* Dark navy = foreground/near, teal = midground, bright warm white = far */
         vec3 near_c = vec3(0.05, 0.11, 0.24);
         vec3 mid_c  = vec3(0.18, 0.58, 0.68);
         vec3 far_c  = vec3(0.96, 0.94, 0.86);
-        vec3 vis = d < 0.5 ? mix(near_c, mid_c, d * 2.0) : mix(mid_c, far_c, (d - 0.5) * 2.0);
+        vec3 vis = d_here < 0.5 ? mix(near_c, mid_c, d_here * 2.0) : mix(mid_c, far_c, (d_here - 0.5) * 2.0);
         frag_color = vec4(vis, 1.0);
         return;
     }
@@ -42,11 +47,12 @@ void main() {
     vec4 fog = texture(u_fog, v_uv);
     vec3 bloom = texture(u_bloom, v_uv).rgb;
 
-    vec3 col = fog.rgb + bloom * (fog.a * u_bloom_amount * 0.75);
+    /* Depth-weighted atmospheric PSF halation */
+    float depth_w_psf = 0.45 + 0.55 * smoothstep(0.22, 0.62, d_here);
+    vec3 col = fog.rgb + bloom * (fog.a * u_bloom_amount * depth_w_psf * 0.75);
 
     /* Volumetric crepuscular sunbeams occluded by foreground 3D depth */
     if (u_god_rays > 0.001 && fog.a > 0.001) {
-        float d_here = texture(u_depth, v_uv).r;
         float fg_vis = smoothstep(0.18, 0.46, d_here);
         if (fg_vis > 0.001) {
             float jitter = hash12(gl_FragCoord.xy);
@@ -87,5 +93,22 @@ void main() {
         }
     }
 
-    frag_color = vec4(linear_to_srgb(col), 1.0);
+    vec3 out_srgb = linear_to_srgb(col);
+
+    /* Interactive Mark Mode overlay: translucent depth-aware cyan fog mask + emerald protect mask */
+    if (u_show_mask > 0.5 && !(u_split_enabled > 0.5 && v_uv.x < u_split_pos)) {
+        float m = texture(u_mask_vis, v_uv).r;
+        float pr = texture(u_prot_vis, v_uv).r;
+        float d_in = smoothstep(u_mask_depth_min - 0.03, u_mask_depth_min + 0.06, d_here);
+        float m_eff = m * (1.0 - pr);
+        /* Show full brush stroke subtly, stronger where depth allows fog */
+        float tint_a = clamp(m_eff * (0.12 + 0.34 * d_in), 0.0, 0.48);
+        vec3 marker_col = mix(vec3(0.45, 0.62, 0.78), vec3(0.32, 0.78, 0.98), d_in);
+        out_srgb = mix(out_srgb, marker_col, tint_a);
+        if (pr > 0.02) {
+            out_srgb = mix(out_srgb, vec3(0.22, 0.88, 0.52), clamp(pr * 0.40, 0.0, 0.42));
+        }
+    }
+
+    frag_color = vec4(out_srgb, 1.0);
 }

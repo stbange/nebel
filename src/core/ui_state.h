@@ -4,8 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define NEBEL_UI_MAX_CMDS 512
-#define NEBEL_UI_TEXT_LEN 64
+#define NEBEL_UI_MAX_CMDS 768
+#define NEBEL_UI_TEXT_LEN 128
 
 typedef enum {
     NEBEL_UI_CMD_RECT = 0,
@@ -32,10 +32,19 @@ typedef struct {
     bool mouse_pressed;
     bool mouse_released;
     bool pointer_over_ui;
+    bool modal_active;
+    bool last_hovered;
     uint32_t active_widget;
+    uint32_t hovered_widget;
+
+    bool has_tooltip;
+    char tooltip_text[256];
+
     NebelUiDrawCmd cmds[NEBEL_UI_MAX_CMDS];
     int cmd_count;
 } NebelUiState;
+
+int nebel_utf8_char_count(const char *s);
 
 void nebel_ui_init(NebelUiState *ui);
 void nebel_ui_begin_frame(NebelUiState *ui, int vw, int vh,
@@ -52,7 +61,15 @@ void nebel_ui_ring(NebelUiState *ui, float cx, float cy, float radius,
 bool nebel_ui_button(NebelUiState *ui, uint32_t id, float x, float y, float w, float h,
                      const char *label, bool active_highlight, int icon_id);
 
+bool nebel_ui_accent_button(NebelUiState *ui, uint32_t id, float x, float y, float w, float h,
+                            const char *label, bool pulsing, int icon_id);
+
 bool nebel_ui_slider(NebelUiState *ui, uint32_t id, float x, float y, float w, float h,
                      const char *label, float *value, float min_v, float max_v);
+
+void nebel_ui_progress_bar(NebelUiState *ui, float x, float y, float w, float h,
+                           float progress, const char *label);
+
+void nebel_ui_tooltip(NebelUiState *ui, const char *text);
 
 #endif /* NEBEL_CORE_UI_STATE_H */

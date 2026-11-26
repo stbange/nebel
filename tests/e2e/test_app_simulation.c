@@ -247,12 +247,55 @@ int main(void) {
     ASSERT_TRUE(reloaded.width == W && reloaded.height == H);
     nebel_image_free(&reloaded);
 
+    /* 9. Nebel v3: Mark -> Render workflow, 3-tier budgets, PatchFusion, EN/DE/PL & Help */
+    int s_nat, sl_nat, sh_nat, fl_nat, g_nat;
+    int s_wdk, sl_wdk, sh_wdk, fl_wdk, g_wdk;
+    int s_wmb, sl_wmb, sh_wmb, fl_wmb, g_wmb;
+    nebel_app_set_quality(&app, NEBEL_QUALITY_STUDIO);
+    nebel_app_set_platform_tier(&app, NEBEL_TIER_DESKTOP);
+    nebel_app_get_render_budget(&app, &s_nat, &sl_nat, &sh_nat, &fl_nat, &g_nat);
+    nebel_app_set_platform_tier(&app, NEBEL_TIER_WEB_DESKTOP);
+    nebel_app_get_render_budget(&app, &s_wdk, &sl_wdk, &sh_wdk, &fl_wdk, &g_wdk);
+    nebel_app_set_platform_tier(&app, NEBEL_TIER_WEB_MOBILE);
+    nebel_app_get_render_budget(&app, &s_wmb, &sl_wmb, &sh_wmb, &fl_wmb, &g_wmb);
+    ASSERT_TRUE(sl_nat >= sl_wdk && sl_wdk >= sl_wmb);
+    ASSERT_TRUE(g_nat >= g_wdk && g_wdk >= g_wmb);
+    ASSERT_TRUE(s_nat >= s_wdk && s_wdk >= s_wmb);
+    nebel_app_set_platform_tier(&app, NEBEL_TIER_DESKTOP);
+
+    /* PatchFusion tile merge produces HD depth map */
+    float pf_tile[8 * 8];
+    for (int i = 0; i < 64; i++) pf_tile[i] = 0.72f;
+    NebelDepthTile pf_tiles[1] = { { pf_tile, 8, 8, 0.0f, 0.0f, 1.0f, 1.0f } };
+    ASSERT_TRUE(nebel_app_set_external_depth_fused(&app, nn_depth, 16, 12, pf_tiles, 1));
+    ASSERT_TRUE(app.depth_is_hd);
+
+    /* Mark -> Render -> Cancel state machine via hotkeys */
+    ASSERT_TRUE(nebel_lua_on_key(&lua, "M", false, false));
+    ASSERT_TRUE(nebel_lua_on_key(&lua, "ENTER", false, false));
+    ASSERT_TRUE(app.render_phase != NEBEL_PHASE_MARK);
+    ASSERT_TRUE(nebel_lua_on_key(&lua, "ESC", false, false));
+    ASSERT_TRUE(app.render_phase == NEBEL_PHASE_MARK);
+
+    /* Multi-language UI frames (German & Polish) + Help F1 dispatch */
+    const char *langs[3] = { "de", "pl", "en" };
+    for (int li = 0; li < 3; li++) {
+        nebel_app_set_lang(&app, langs[li]);
+        nebel_ui_begin_frame(&app.ui, 1280, 760, 120, 120, false, false, false);
+        ASSERT_TRUE(nebel_lua_on_ui(&lua, 1280, 760));
+        nebel_ui_end_frame(&app.ui);
+        ASSERT_TRUE(app.ui.cmd_count > 15);
+    }
+    app.req_open_url[0] = '\0';
+    ASSERT_TRUE(nebel_lua_on_key(&lua, "F1", false, false));
+    ASSERT_TRUE(strstr(app.req_open_url, "help.html?lang=en") != NULL);
+
     free(before_touch);
     nebel_image_free(&res1);
     nebel_image_free(&res2);
     nebel_lua_free(&lua);
     nebel_app_free(&app);
 
-    printf("E2E automated simulation test PASSED (manifest, desktop, touch, multi-layer fog, god rays, shadow pool, auto-depth, 16-bit export).\n");
+    printf("E2E automated simulation test PASSED (manifest, desktop, touch, multi-layer fog, god rays, shadow pool, auto-depth, v3 Mark->Render/i18n/PatchFusion, 16-bit export).\n");
     return 0;
 }

@@ -1,9 +1,18 @@
 -- Nebel Photographer Fog Presets (MIT License)
 -- Edit or add presets here without recompiling the C engine (press F5 to reload).
 
+local i18n = require("i18n")
+
 local M = {}
 
 M.order = { "Morning Valley", "Woodland Mist", "Backlit Wildlife", "Moody Overcast" }
+
+M.label_keys = {
+    ["Morning Valley"]   = "preset_valley",
+    ["Woodland Mist"]    = "preset_woodland",
+    ["Backlit Wildlife"] = "preset_wildlife",
+    ["Moody Overcast"]   = "preset_overcast",
+}
 
 M.presets = {
     ["Morning Valley"] = {
@@ -24,6 +33,8 @@ M.presets = {
         bloom_amount = 0.40,
         god_rays = 0.45,
         shadow_pool = 0.55,
+        fluid_flow = 0.68,
+        delight_strength = 0.45,
         grain_match = 1.0,
         edge_refine = 0.88,
     },
@@ -45,6 +56,8 @@ M.presets = {
         bloom_amount = 0.38,
         god_rays = 0.55,
         shadow_pool = 0.50,
+        fluid_flow = 0.75,
+        delight_strength = 0.50,
         grain_match = 1.1,
         edge_refine = 0.92,
     },
@@ -66,6 +79,8 @@ M.presets = {
         bloom_amount = 0.65,
         god_rays = 0.85,
         shadow_pool = 0.45,
+        fluid_flow = 0.62,
+        delight_strength = 0.38,
         grain_match = 1.0,
         edge_refine = 0.95,
     },
@@ -87,6 +102,8 @@ M.presets = {
         bloom_amount = 0.18,
         god_rays = 0.05,
         shadow_pool = 0.40,
+        fluid_flow = 0.60,
+        delight_strength = 0.65,
         grain_match = 1.15,
         edge_refine = 0.85,
     },
@@ -101,7 +118,7 @@ function M.apply(name)
     for k, v in pairs(p) do
         nebel.layers.set(idx, k, v)
     end
-    nebel.view.set_status("Preset applied: " .. name)
+    nebel.view.set_status(i18n.t("status_preset"))
     nebel.audio.play("assets/sounds/ui_click.wav", 0.4)
     return true
 end

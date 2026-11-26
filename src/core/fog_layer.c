@@ -37,6 +37,8 @@ void nebel_fog_params_default(NebelFogParams *p) {
     p->bloom_amount = 0.25f;
     p->god_rays = 0.35f;
     p->shadow_pool = 0.35f;
+    p->fluid_flow = 0.65f;
+    p->delight_strength = 0.45f;
     p->grain_match = 1.0f;
     p->edge_refine = 0.85f;
     p->noise_seed = 1337u;
@@ -63,6 +65,8 @@ void nebel_fog_params_clamp(NebelFogParams *p) {
     p->bloom_amount = clampf(p->bloom_amount, 0.0f, 1.5f);
     p->god_rays = clampf(p->god_rays, 0.0f, 1.5f);
     p->shadow_pool = clampf(p->shadow_pool, 0.0f, 1.0f);
+    p->fluid_flow = clampf(p->fluid_flow, 0.0f, 1.0f);
+    p->delight_strength = clampf(p->delight_strength, 0.0f, 1.0f);
     p->grain_match = clampf(p->grain_match, 0.0f, 2.0f);
     p->edge_refine = clampf(p->edge_refine, 0.0f, 1.0f);
 }
@@ -99,7 +103,6 @@ float nebel_henyey_greenstein(float cos_theta, float g) {
     float denom = 1.0f + g2 - 2.0f * g * cos_theta;
     if (denom < 1e-4f) denom = 1e-4f;
     float p = (1.0f - g2) / (4.0f * 3.14159265f * powf(denom, 1.5f));
-    /* Normalize relative to peak forward scatter at cos_theta = 1 */
     float peak = (1.0f - g2) / (4.0f * 3.14159265f * powf(1.0f - g, 3.0f));
     return peak > 1e-5f ? clampf(p / peak, 0.0f, 1.0f) : 0.0f;
 }
@@ -177,6 +180,26 @@ static float sample_f32_bilinear(const float *buf, int w, int h, float u, float 
     float c = buf[(size_t)y1 * (size_t)w + (size_t)x0];
     float d = buf[(size_t)y1 * (size_t)w + (size_t)x1];
     return (a + (b - a) * fx) * (1.0f - fy) + (c + (d - c) * fx) * fy;
+}
+
+static void sample_rg_bilinear(const float *buf, int w, int h, float u, float v, float out[2]) {
+    float sx = clampf(u, 0.0f, 1.0f) * (float)(w - 1);
+    float sy = clampf(v, 0.0f, 1.0f) * (float)(h - 1);
+    int x0 = (int)floorf(sx);
+    int y0 = (int)floorf(sy);
+    int x1 = x0 + 1 < w ? x0 + 1 : w - 1;
+    int y1 = y0 + 1 < h ? y0 + 1 : h - 1;
+    float fx = sx - (float)x0;
+    float fy = sy - (float)y0;
+    const float *p00 = &buf[((size_t)y0 * (size_t)w + (size_t)x0) * 2u];
+    const float *p10 = &buf[((size_t)y0 * (size_t)w + (size_t)x1) * 2u];
+    const float *p01 = &buf[((size_t)y1 * (size_t)w + (size_t)x0) * 2u];
+    const float *p11 = &buf[((size_t)y1 * (size_t)w + (size_t)x1) * 2u];
+    for (int c = 0; c < 2; c++) {
+        float top = p00[c] + (p10[c] - p00[c]) * fx;
+        float bot = p01[c] + (p11[c] - p01[c]) * fx;
+        out[c] = top + (bot - top) * fy;
+    }
 }
 
 static void sample_rgb_bilinear(const float *buf, int w, int h, float u, float v, float out[3]) {
@@ -278,6 +301,59 @@ static void separable_box_blur_rgb(float *rgb, int w, int h, int radius) {
             o[2] = (float)sb * inv;
         }
     }
+
+    free(tmp);
+}
+
+/* Terrain-guided valley & obstacle curl flow advection (matches fluid_advect.frag 1:1) */
+static void compute_fluid_flow_cpu(const float *depth_map, int dw, int dh,
+                                   float *flow_rg, int fw, int fh, int steps) {
+    size_t fn = (size_t)fw * (size_t)fh;
+    memset(flow_rg, 0, fn * 2u * sizeof(float));
+    if (!depth_map || dw <= 1 || dh <= 1 || steps <= 0) return;
+
+    float *tmp = (float *)calloc(fn * 2u, sizeof(float));
+    if (!tmp) return;
+
+    float du_step = 2.0f / (float)(fw > 1 ? fw : 1);
+    float dv_step = 2.0f / (float)(fh > 1 ? fh : 1);
+    float dt = 0.045f / (float)(steps > 4 ? steps : 4);
+
+    for (int s = 0; s < steps; s++) {
+        for (int y = 0; y < fh; y++) {
+            float v = fh > 1 ? (float)y / (float)(fh - 1) : 0.0f;
+            for (int x = 0; x < fw; x++) {
+                float u = fw > 1 ? (float)x / (float)(fw - 1) : 0.0f;
+                size_t idx = ((size_t)y * (size_t)fw + (size_t)x) * 2u;
+                float cu = flow_rg[idx + 0];
+                float cv = flow_rg[idx + 1];
+                float su = clampf(u + cu, 0.0f, 1.0f);
+                float sv = clampf(v + cv, 0.0f, 1.0f);
+
+                float dl = sample_f32_bilinear(depth_map, dw, dh, su - du_step, sv);
+                float dr = sample_f32_bilinear(depth_map, dw, dh, su + du_step, sv);
+                float dt_d = sample_f32_bilinear(depth_map, dw, dh, su, sv - dv_step);
+                float db_d = sample_f32_bilinear(depth_map, dw, dh, su, sv + dv_step);
+                float gx = (dr - dl) * 0.5f;
+                float gy = (db_d - dt_d) * 0.5f;
+
+                /* Curl around foreground obstacles + valley pooling + cold-air settling */
+                float vx = -gy * 0.85f + gx * 0.55f;
+                float vy =  gx * 0.85f + gy * 0.55f + 0.025f;
+
+                float nu = clampf(cu + clampf(vx * dt, -0.008f, 0.008f), -0.065f, 0.065f);
+                float nv = clampf(cv + clampf(vy * dt, -0.008f, 0.008f), -0.065f, 0.065f);
+                /* Gentle spatial smoothing along advected flow */
+                float prev_f[2];
+                sample_rg_bilinear(flow_rg, fw, fh, clampf(u - vx * dt * 0.5f, 0.0f, 1.0f),
+                                   clampf(v - vy * dt * 0.5f, 0.0f, 1.0f), prev_f);
+                tmp[idx + 0] = nu * 0.72f + prev_f[0] * 0.28f;
+                tmp[idx + 1] = nv * 0.72f + prev_f[1] * 0.28f;
+            }
+        }
+        memcpy(flow_rg, tmp, fn * 2u * sizeof(float));
+    }
+
     free(tmp);
 }
 
@@ -285,11 +361,12 @@ static float fbm_wide(float x, float y, uint32_t seed) {
     return clampf((nebel_fbm2d(x, y, seed) - 0.28f) / 0.44f, 0.0f, 1.0f);
 }
 
+/* Soft billowy stratified fog sheet at FIXED world-space depth plane z */
 static float fog_sheet_density(float u, float v, float z, const NebelFogParams *p, uint32_t seed) {
     float persp = 0.35f + (1.0f - z) * 0.95f;
     float s_f = (float)(seed % 10000u);
-    float px = ((u - 0.5f) / persp * 0.78f) * (p->noise_scale * 0.52f) + s_f * 0.13f;
-    float py = ((v - p->horizon_y) / persp * 1.35f) * (p->noise_scale * 0.52f) - s_f * 0.09f;
+    float px = ((u - 0.5f) / persp) * 0.78f * (p->noise_scale * 0.52f) + s_f * 0.13f;
+    float py = ((v - p->horizon_y) / persp) * 1.35f * (p->noise_scale * 0.52f) - s_f * 0.09f;
 
     float qx = fbm_wide(px * 0.65f, py * 0.65f, seed) - 0.5f;
     float qy = fbm_wide(px * 0.65f + 4.7f, py * 0.65f + 1.9f, seed + 17u) - 0.5f;
@@ -304,22 +381,32 @@ static float fog_sheet_density(float u, float v, float z, const NebelFogParams *
     float turb = (1.0f - p->noise_amount) + (0.08f + 1.35f * patchy * patchy) * p->noise_amount;
 
     float ceiling = p->horizon_y + (1.0f - z) * 0.13f + (macro - 0.5f) * 0.14f * p->noise_amount;
-    float above = ceiling > v ? (ceiling - v) : 0.0f;
+    float above = ceiling - v;
+    if (above < 0.0f) above = 0.0f;
     float h_att = expf(-p->height_falloff * above * 2.8f);
 
     return turb * h_att;
 }
 
-bool nebel_fog_render_cpu(const NebelImage *src,
-                          const float *depth_map, int depth_w, int depth_h,
-                          const uint8_t *protect_mask, int protect_w, int protect_h,
-                          const NebelFogLayer *layers, int layer_count,
-                          float sensor_noise, NebelImage *out) {
-    if (!src || !src->rgba || !out || layer_count < 0 || layer_count > NEBEL_MAX_LAYERS) {
-        return false;
-    }
+bool nebel_fog_render_cpu_ex(const NebelImage *src,
+                             const float *depth_map, int depth_w, int depth_h,
+                             const uint8_t *protect_mask, int protect_w, int protect_h,
+                             const NebelFogLayer *layers, int layer_count,
+                             float sensor_noise, const NebelRenderQuality *quality,
+                             NebelImage *out) {
+    if (!src || !src->rgba || !out || src->width <= 0 || src->height <= 0) return false;
     if (!nebel_image_clone(src, out)) return false;
-    if (!layers || layer_count == 0) return true;
+    if (!layers || layer_count <= 0) return true;
+
+    int ray_slices = quality ? quality->ray_slices : 12;
+    int shadow_steps = quality ? quality->shadow_steps : 8;
+    int fluid_steps = quality ? quality->fluid_steps : 12;
+    if (ray_slices < 5) ray_slices = 5;
+    if (ray_slices > 32) ray_slices = 32;
+    if (shadow_steps < 0) shadow_steps = 0;
+    if (shadow_steps > 16) shadow_steps = 16;
+    if (fluid_steps < 0) fluid_steps = 0;
+    if (fluid_steps > 32) fluid_steps = 32;
 
     int w = src->width;
     int h = src->height;
@@ -327,11 +414,14 @@ bool nebel_fog_render_cpu(const NebelImage *src,
 
     int aw = 1, ah = 1;
     scaled_dims(w, h, 4, 512, &aw, &ah);
+
     float *luma = (float *)calloc(n * 2u, sizeof(float));
     float *amb_buf = (float *)calloc((size_t)aw * (size_t)ah * 3u, sizeof(float));
-    if (!luma || !amb_buf) {
+    float *flow_buf = (float *)calloc((size_t)aw * (size_t)ah * 2u, sizeof(float));
+    if (!luma || !amb_buf || !flow_buf) {
         free(luma);
         free(amb_buf);
+        free(flow_buf);
         nebel_image_free(out);
         return false;
     }
@@ -342,7 +432,7 @@ bool nebel_fog_render_cpu(const NebelImage *src,
         luma[i] = clampf(0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2], 0.0f, 1.0f);
     }
 
-    /* Quarter-res (<=512px) wide scene ambient light map matching GPU tex_amb */
+    /* Quarter-res (<=512px) wide scene ambient light map + terrain-guided fluid flow */
     for (int y = 0; y < ah; y++) {
         int sy = ah > 1 ? (int)((size_t)y * (size_t)(h - 1) / (size_t)(ah - 1)) : 0;
         for (int x = 0; x < aw; x++) {
@@ -357,6 +447,8 @@ bool nebel_fog_render_cpu(const NebelImage *src,
     if (arad > 12) arad = 12;
     separable_box_blur_rgb(amb_buf, aw, ah, arad);
     separable_box_blur_rgb(amb_buf, aw, ah, arad);
+
+    compute_fluid_flow_cpu(depth_map, depth_w, depth_h, flow_buf, aw, ah, fluid_steps);
 
     float max_bloom = 0.0f;
     float max_grain = 0.0f;
@@ -379,7 +471,7 @@ bool nebel_fog_render_cpu(const NebelImage *src,
             rays_sun_y = p.sun_y;
         }
 
-        /* Refine fog mask at work/mask resolution (<=2048px, matching GPU) so 20-45MP exports never OOM */
+        /* Refine fog mask at work/mask resolution (<=2048px, matching GPU) */
         int mw = layer->mask_w < w ? layer->mask_w : w;
         int mh = layer->mask_h < h ? layer->mask_h : h;
         scaled_dims(mw, mh, 1, 2048, &mw, &mh);
@@ -388,6 +480,7 @@ bool nebel_fog_render_cpu(const NebelImage *src,
         if (!mask_work) {
             free(luma);
             free(amb_buf);
+            free(flow_buf);
             nebel_image_free(out);
             return false;
         }
@@ -419,6 +512,9 @@ bool nebel_fog_render_cpu(const NebelImage *src,
         }
 
         uint32_t base_seed = p.noise_seed % 10000u;
+        bool do_shadows = (depth_map != NULL && shadow_steps > 0);
+        float slice_norm = 1.10f / (float)ray_slices;
+
         for (int y = 0; y < h; y++) {
             float v = h > 1 ? (float)y / (float)(h - 1) : 0.0f;
             for (int x = 0; x < w; x++) {
@@ -435,25 +531,51 @@ bool nebel_fog_render_cpu(const NebelImage *src,
                     ? (1.0f - smoothstepf(p.depth_max - 0.08f, p.depth_max + 0.04f, d))
                     : 1.0f;
 
-                /* True fixed-plane 5-slice volumetric ray-march between depth_min and depth_max */
+                float flow[2] = { 0.0f, 0.0f };
+                if (p.fluid_flow > 0.001f && fluid_steps > 0) {
+                    sample_rg_bilinear(flow_buf, aw, ah, u, v, flow);
+                }
+                float adv_u = clampf(u + flow[0] * p.fluid_flow, 0.0f, 1.0f);
+                float adv_v = clampf(v + flow[1] * p.fluid_flow, 0.0f, 1.0f);
+
+                /* Multi-slice volumetric ray-march with 3D heightfield shadow cones */
                 float d_span = (p.depth_max - p.depth_min) > 0.08f ? (p.depth_max - p.depth_min) : 0.08f;
                 float slice_tau = 0.0f;
+                float lit_tau = 0.0f;
                 float macro_ref = 0.0f;
-                for (int s = 0; s < 5; s++) {
-                    float frac = ((float)s + 0.5f) / 5.0f;
+
+                for (int s = 0; s < ray_slices; s++) {
+                    float frac = ((float)s + 0.5f) / (float)ray_slices;
                     float z_s = p.depth_min + d_span * frac;
                     float in_front = smoothstepf(z_s - 0.065f, z_s + 0.055f, d);
                     if (in_front <= 1e-4f) continue;
-                    float sheet = fog_sheet_density(u, v, z_s, &p, base_seed + (uint32_t)s * 29u);
-                    float weight = (0.75f + 0.50f * frac) * 0.22f;
-                    slice_tau += sheet * in_front * weight;
+
+                    uint32_t s_seed = base_seed + (uint32_t)((s * 5) / ray_slices) * 29u;
+                    float sheet = fog_sheet_density(adv_u, adv_v, z_s, &p, s_seed);
+                    float weight = (0.75f + 0.50f * frac) * slice_norm;
+                    float dt_s = sheet * in_front * weight;
+
+                    float sun_vis = 1.0f;
+                    if (do_shadows) {
+                        float occ = 0.0f;
+                        for (int k = 0; k < shadow_steps; k++) {
+                            float tk = (((float)k + 0.5f) / (float)shadow_steps) * 0.42f;
+                            float su = clampf(u + (p.sun_x - u) * tk, 0.0f, 1.0f);
+                            float sv = clampf(v + (p.sun_y - v) * tk, 0.0f, 1.0f);
+                            float sd = sample_f32_bilinear(depth_map, depth_w, depth_h, su, sv);
+                            occ += smoothstepf(z_s - 0.02f, z_s - 0.09f, sd);
+                        }
+                        sun_vis = expf(-(occ / (float)shadow_steps) * 2.4f);
+                    }
+
+                    slice_tau += dt_s;
+                    lit_tau += dt_s * sun_vis;
                     if (sheet * in_front > macro_ref) macro_ref = sheet * in_front;
                 }
 
                 float edge_m = smoothstepf(0.04f, 0.90f, m + (macro_ref - 0.50f) * p.noise_amount * 0.65f);
                 float m_org = m * (1.0f - p.noise_amount) + (m * (0.25f + 1.05f * edge_m)) * p.noise_amount;
 
-                /* Shadow / trough pooling bias: matches GPU prev.rgb luminance on single and multi-layer fog */
                 float *px = &out->rgba[idx * 4u];
                 float px_lum = clampf(0.2126f * px[0] + 0.7152f * px[1] + 0.0722f * px[2], 0.0f, 1.5f);
                 float darkness = 1.0f - smoothstepf(0.06f, 0.78f, sqrtf(px_lum));
@@ -466,22 +588,44 @@ bool nebel_fog_render_cpu(const NebelImage *src,
 
                 float amb[3];
                 sample_rgb_bilinear(amb_buf, aw, ah, u, v, amb);
-                float amb_lum = clampf(0.2126f * amb[0] + 0.7152f * amb[1] + 0.0722f * amb[2], 0.0f, 1.0f);
+                float amb_lum = clampf(0.2126f * amb[0] + 0.7152f * amb[1] + 0.0722f * amb[2], 0.0f, 1.5f);
                 float s_lum = sqrtf(amb_lum);
 
+                /* Intrinsic shadow softening (de-lighting harsh sun shadows inside thick fog) */
+                float base_rgb[3] = { px[0], px[1], px[2] };
+                if (p.delight_strength > 0.001f && opacity > 0.001f) {
+                    float dl_w = clampf(p.delight_strength * opacity * 0.48f, 0.0f, 0.55f);
+                    float soft_lum = px_lum + (amb_lum - px_lum) * 0.65f;
+                    float l_scale = clampf(soft_lum / (px_lum > 0.04f ? px_lum : 0.04f), 0.55f, 2.2f);
+                    for (int c = 0; c < 3; c++) {
+                        float delit = px[c] * l_scale * 0.78f + amb[c] * 0.22f;
+                        base_rgb[c] = clampf(px[c] * (1.0f - dl_w) + delit * dl_w, 0.0f, 1.5f);
+                    }
+                }
+
+                /* Multi-octave Mie multiple scattering modulated by 3D volumetric sun visibility */
+                float col_sun_vis = (slice_tau > 1e-4f) ? clampf(lit_tau / slice_tau, 0.0f, 1.0f) : 1.0f;
                 float dx = u - p.sun_x;
                 float dy = v - p.sun_y;
                 float ang_dist = sqrtf(dx * dx + dy * dy);
                 float cos_theta = cosf(clampf(ang_dist * 2.2f, 0.0f, 3.14159265f));
-                float sun_phase = nebel_henyey_greenstein(cos_theta, p.sun_anisotropy);
-                float sun_boost = p.sun_strength * sun_phase * (0.35f + 0.65f * s_lum);
+                float p1 = nebel_henyey_greenstein(cos_theta, p.sun_anisotropy);
+                float p2 = nebel_henyey_greenstein(cos_theta, p.sun_anisotropy * 0.45f);
+                float ms_factor = 1.0f - expf(-tau * 1.4f);
+                float scatter = p1 * col_sun_vis * 0.72f
+                              + p2 * (0.35f + 0.65f * col_sun_vis) * 0.38f
+                              + 0.28f * ms_factor * 0.28f;
+                float sun_boost = p.sun_strength * scatter * (0.35f + 0.65f * s_lum);
 
+                static const float sh_tint[3] = { 0.80f, 0.88f, 0.98f };
+                static const float hi_tint[3] = { 1.04f, 1.01f, 0.97f };
                 for (int c = 0; c < 3; c++) {
                     float warm = (c == 0) ? 1.15f : ((c == 1) ? 1.02f : 0.84f);
-                    float lit = p.airlight[c] * (0.40f + 1.12f * s_lum) + amb[c] * 0.28f;
-                    float local_air = p.airlight[c] * 0.35f + lit * 0.65f;
+                    float tint = sh_tint[c] + (hi_tint[c] - sh_tint[c]) * col_sun_vis;
+                    float lit = p.airlight[c] * tint * (0.40f + 1.12f * s_lum) + amb[c] * 0.28f;
+                    float local_air = p.airlight[c] * tint * 0.35f + lit * 0.65f;
                     float air = local_air + sun_boost * 0.55f * warm;
-                    px[c] = clampf(px[c] * trans + air * opacity, 0.0f, 1.5f);
+                    px[c] = clampf(base_rgb[c] * trans + air * opacity, 0.0f, 1.5f);
                 }
             }
         }
@@ -489,8 +633,9 @@ bool nebel_fog_render_cpu(const NebelImage *src,
     }
 
     free(amb_buf);
+    free(flow_buf);
 
-    /* Half-res (<=1024px) highlight veiling glare / bloom weighted by accumulated fog opacity */
+    /* Half-res (<=1024px) depth-weighted optical halation / bloom */
     if (max_bloom > 1e-3f) {
         int bw = 1, bh = 1;
         scaled_dims(w, h, 2, 1024, &bw, &bh);
@@ -522,12 +667,15 @@ bool nebel_fog_render_cpu(const NebelImage *src,
                     float f = fog_accum[idx] * max_bloom;
                     if (f <= 1e-4f) continue;
                     float u = w > 1 ? (float)x / (float)(w - 1) : 0.0f;
+                    float d_here = depth_map ? sample_f32_bilinear(depth_map, depth_w, depth_h, u, v) : 0.7f;
+                    float depth_w_psf = 0.45f + 0.55f * smoothstepf(0.22f, 0.62f, d_here);
                     float bl[3];
                     sample_rgb_bilinear(bloom_buf, bw, bh, u, v, bl);
                     float *px = &out->rgba[idx * 4u];
-                    px[0] = clampf(px[0] + bl[0] * f * 0.75f, 0.0f, 1.0f);
-                    px[1] = clampf(px[1] + bl[1] * f * 0.75f, 0.0f, 1.0f);
-                    px[2] = clampf(px[2] + bl[2] * f * 0.75f, 0.0f, 1.0f);
+                    float gain = f * depth_w_psf * 0.75f;
+                    px[0] = clampf(px[0] + bl[0] * gain, 0.0f, 1.0f);
+                    px[1] = clampf(px[1] + bl[1] * gain, 0.0f, 1.0f);
+                    px[2] = clampf(px[2] + bl[2] * gain, 0.0f, 1.0f);
                 }
             }
             free(bloom_buf);
@@ -561,7 +709,6 @@ bool nebel_fog_render_cpu(const NebelImage *src,
                     int sy = (int)(sv * (float)(h - 1) + 0.5f);
                     size_t sidx = (size_t)sy * (size_t)w + (size_t)sx;
                     float sd = depth_map ? sample_f32_bilinear(depth_map, depth_w, depth_h, su, sv) : 0.7f;
-                    /* Bright sunlit gaps behind foreground occluders feed the light shaft */
                     float open = smoothstepf(0.38f, 0.68f, sd);
                     float bright = smoothstepf(0.28f, 0.88f, sqrtf(luma[sidx]));
                     shaft += open * bright * decay;
@@ -584,7 +731,6 @@ bool nebel_fog_render_cpu(const NebelImage *src,
         if (sigma > 1e-5f && fog_accum[i] > 1e-3f) {
             float u1 = (float)(hash_u32((uint32_t)i * 747796405u + 2891336453u) & 0xFFFFu) / 65535.0f;
             float u2 = (float)(hash_u32((uint32_t)i * 277803737u + 1013904223u) & 0xFFFFu) / 65535.0f;
-            /* Triangular zero-mean noise approximating Gaussian */
             float g = (u1 + u2 - 1.0f) * sigma * fog_accum[i];
             px[0] = clampf(px[0] + g, 0.0f, 1.0f);
             px[1] = clampf(px[1] + g, 0.0f, 1.0f);
@@ -598,4 +744,15 @@ bool nebel_fog_render_cpu(const NebelImage *src,
 
     free(luma);
     return true;
+}
+
+bool nebel_fog_render_cpu(const NebelImage *src,
+                          const float *depth_map, int depth_w, int depth_h,
+                          const uint8_t *protect_mask, int protect_w, int protect_h,
+                          const NebelFogLayer *layers, int layer_count,
+                          float sensor_noise, NebelImage *out) {
+    NebelRenderQuality q = { 12, 8, 10 };
+    return nebel_fog_render_cpu_ex(src, depth_map, depth_w, depth_h,
+                                   protect_mask, protect_w, protect_h,
+                                   layers, layer_count, sensor_noise, &q, out);
 }

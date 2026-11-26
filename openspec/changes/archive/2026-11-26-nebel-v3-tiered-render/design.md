@@ -1,0 +1,8 @@
+# Design: Nebel v3 Tiered Studio Architecture
+
+- **Platform Tiers:** `NebelPlatformTier` (`NEBEL_TIER_DESKTOP`, `NEBEL_TIER_WEB_DESKTOP`, `NEBEL_TIER_WEB_MOBILE`) selects default work buffer caps (`2048` vs `1536`), PatchFusion tile grids (`3x3`, `2x2`, `1x1`), fluid advection iterations (`32`, `12`, `4`), and progressive volumetric samples (`64`, `8`, `2`).
+- **Mark -> Render State Machine:** `NebelRenderPhase` transitions `MARK -> DEPTH -> FLUID -> RENDERING -> DONE` (cancellable via `Esc`/button). Editing masks or atmosphere parameters sets `render_dirty = true` and displays the instant marker overlay until `Render` is triggered.
+- **Depth Matting:** `nebel_guided_filter_rgb` computes exact 3x3 per-pixel RGB covariance inversion; `nebel_depth_fuse_tiles` aligns overlapping tiles to global depth via closed-form 2x2 least squares `(a*tile + b)` with cosine feathering; `nebel_depth_paint_brush` lets users sculpt local depth corrections.
+- **Volumetric Physics:** Multi-pass OpenGL 3.3 Core (`GL_RGBA32F`) / WebGL 2.0 (`GL_RGBA16F`) shaders (`marker_overlay.frag`, `fluid_advect.frag`, `fog_layer.frag`, `composite.frag`) mirrored in `src/core/fog_layer.c`, plus Desktop GPU tiled full-resolution export.
+- **Localization & Help:** `DejaVuSans.ttf` baked across `U+0020..U+017F` (`352` glyphs) with UTF-8 decoding; loose `scripts/locales/{en,de,pl}.lua`; deferred word-wrapped tooltip overlay; 4-step `scripts/tutorial.lua` modal; `web/help.html` deployed to GitHub Pages and beside Desktop releases.
+- **GitHub Releases:** Tag-triggered `.github/workflows/release.yml` on `main` builds Windows/macOS/Linux release zips bundling ONNX Runtime, Apache-2.0 `DA2-Small`, loose `assets/` + `scripts/`, offline help, and optional `DA3Mono-Large` download scripts.

@@ -208,13 +208,74 @@ static void test_cv_depth_module(void) {
     float bot_d = depth[44 * 64 + 16];
     CHECK(top_d > bot_d);
 
-    /* External depth upsampling + Guided Filter refinement */
+    /* External depth upsampling + RGB Guided Filter refinement */
     float raw_d[16 * 12];
     for (int y = 0; y < 12; y++) {
         for (int x = 0; x < 16; x++) raw_d[y * 16 + x] = (float)(11 - y);
     }
     CHECK(nebel_depth_refine_external(&img, raw_d, 16, 12, depth));
     CHECK(depth[2 * 64 + 32] > depth[45 * 64 + 32]);
+
+    /* 3-channel RGB covariance Guided Filter snaps isoluminant color boundary */
+    NebelImage iso = {0};
+    CHECK(nebel_image_alloc(&iso, 64, 48));
+    for (int y = 0; y < 48; y++) {
+        for (int x = 0; x < 64; x++) {
+            float *p = &iso.rgba[(y * 64 + x) * 4];
+            if (x < 32) { p[0] = 0.60f; p[1] = 0.14f; p[2] = 0.10f; } /* Reddish ~0.23 luma */
+            else        { p[0] = 0.06f; p[1] = 0.30f; p[2] = 0.10f; } /* Greenish ~0.23 luma */
+            p[3] = 1.0f;
+            src_m[y * 64 + x] = (x < 35) ? 0.10f : 0.90f;
+        }
+    }
+    float luma_g[64 * 48], dst_luma[64 * 48];
+    for (size_t i = 0; i < n; i++) {
+        const float *p = &iso.rgba[i * 4u];
+        luma_g[i] = sqrtf(0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2]);
+    }
+    CHECK(!nebel_guided_filter_rgb(NULL, src_m, dst_m, 3, 0.001f));
+    CHECK(nebel_guided_filter_rgb(&iso, src_m, dst_m, 8, 1e-4f));
+    CHECK(nebel_guided_filter(luma_g, src_m, dst_luma, 64, 48, 8, 1e-4f));
+    CHECK(dst_m[24 * 64 + 12] < 0.20f);
+    CHECK(dst_m[24 * 64 + 52] > 0.80f);
+    CHECK(dst_m[24 * 64 + 31] < 0.18f);
+    CHECK(dst_m[24 * 64 + 33] > dst_m[24 * 64 + 31] + 0.35f); /* Sharp snap right at isoluminant edge x=32 */
+    CHECK((dst_m[24 * 64 + 33] - dst_m[24 * 64 + 31]) >
+          (dst_luma[24 * 64 + 33] - dst_luma[24 * 64 + 31]) + 0.25f); /* RGB clearly beats scalar luma */
+    nebel_image_free(&iso);
+
+    /* Multi-scale PatchFusion least-squares affine tile stitching */
+    float g_map[16 * 12];
+    for (int y = 0; y < 12; y++) {
+        for (int x = 0; x < 16; x++) g_map[y * 16 + x] = (float)x / 15.0f;
+    }
+    float t0_d[16 * 16], t1_d[16 * 16];
+    for (int y = 0; y < 16; y++) {
+        for (int x = 0; x < 16; x++) {
+            float u0 = ((float)x / 15.0f) * 0.6f;
+            float u1 = 0.4f + ((float)x / 15.0f) * 0.6f;
+            t0_d[y * 16 + x] = u0 * 2.4f + 0.35f; /* Arbitrary scale + offset */
+            t1_d[y * 16 + x] = u1 * 0.4f - 0.10f;
+        }
+    }
+    NebelDepthTile tiles[2] = {
+        { t0_d, 16, 16, 0.0f, 0.0f, 0.6f, 1.0f },
+        { t1_d, 16, 16, 0.4f, 0.0f, 1.0f, 1.0f }
+    };
+    CHECK(!nebel_depth_fuse_tiles(NULL, 16, 12, tiles, 2, 64, 48, depth));
+    CHECK(nebel_depth_fuse_tiles(g_map, 16, 12, NULL, 0, 64, 48, depth));
+    CHECK(nebel_depth_fuse_tiles(g_map, 16, 12, tiles, 2, 64, 48, depth));
+    CHECK(depth[24 * 64 + 4] < 0.15f);
+    CHECK(depth[24 * 64 + 60] > 0.85f);
+
+    /* Interactive Depth Touch-Up brush (Closer & Farther) */
+    for (size_t i = 0; i < n; i++) depth[i] = 0.60f;
+    nebel_depth_paint_brush(depth, 64, 48, 0.5f, 0.5f, 0.52f, 0.5f, 0.15f, 1.0f, true);
+    CHECK(depth[24 * 64 + 32] < 0.56f);
+    CHECK_NEAR(depth[0], 0.60f, 1e-5f);
+    float d_near = depth[24 * 64 + 32];
+    nebel_depth_paint_brush(depth, 64, 48, 0.5f, 0.5f, 0.5f, 0.5f, 0.15f, 1.0f, false);
+    CHECK(depth[24 * 64 + 32] > d_near + 0.02f);
 
     free(depth); free(guide); free(src_m); free(dst_m);
     nebel_image_free(&img);
@@ -311,7 +372,7 @@ static void test_brush_and_fog_module(void) {
     NebelFogLayer pl;
     CHECK(nebel_fog_layer_init(&pl, "Pool", 64, 48));
     memset(pl.mask, 255, 64u * 48u);
-    pl.params.density = 1.6f;
+    pl.params.density = 1.2f;
     pl.params.depth_min = 0.2f; pl.params.depth_max = 1.0f;
     pl.params.height_falloff = 0.0f;
     pl.params.noise_amount = 0.0f;
@@ -320,6 +381,8 @@ static void test_brush_and_fog_module(void) {
     pl.params.god_rays = 0.0f;
     pl.params.grain_match = 0.0f;
     pl.params.edge_refine = 0.0f;
+    pl.params.delight_strength = 0.0f;
+    pl.params.fluid_flow = 0.0f;
     pl.params.airlight[0] = 0.35f; pl.params.airlight[1] = 0.35f; pl.params.airlight[2] = 0.35f;
 
     NebelImage out_nopool = {0}, out_pool = {0};
@@ -337,6 +400,30 @@ static void test_brush_and_fog_module(void) {
           fabsf(out_nopool.rgba[bright_px] - pool_img.rgba[bright_px]) - 0.01f);
     nebel_image_free(&out_nopool);
     nebel_image_free(&out_pool);
+
+    /* Intrinsic shadow softening (de-lighting) reduces dark-vs-bright shadow contrast inside thick fog */
+    NebelImage dl_img = {0};
+    CHECK(nebel_image_alloc(&dl_img, 64, 48));
+    for (int y = 0; y < 48; y++) {
+        for (int x = 0; x < 64; x++) {
+            float *px = &dl_img.rgba[(y * 64 + x) * 4];
+            float v = (x >= 26 && x <= 38 && y >= 18 && y <= 30) ? 0.04f : 0.72f;
+            px[0] = v; px[1] = v; px[2] = v; px[3] = 1.0f;
+        }
+    }
+    NebelImage out_nodl = {0}, out_dl = {0};
+    pl.params.shadow_pool = 0.0f;
+    pl.params.density = 1.4f;
+    pl.params.delight_strength = 0.0f;
+    CHECK(nebel_fog_render_cpu(&dl_img, pool_depth, 64, 48, NULL, 0, 0, &pl, 1, 0.0f, &out_nodl));
+    pl.params.delight_strength = 1.0f;
+    pl.params.fluid_flow = 0.7f;
+    CHECK(nebel_fog_render_cpu(&dl_img, pool_depth, 64, 48, NULL, 0, 0, &pl, 1, 0.0f, &out_dl));
+    size_t shadow_center = (24u * 64u + 32u) * 4u;
+    CHECK(out_dl.rgba[shadow_center] > out_nodl.rgba[shadow_center] + 0.015f);
+    nebel_image_free(&out_nodl);
+    nebel_image_free(&out_dl);
+    nebel_image_free(&dl_img);
 
     /* GPU/CPU parity: noise_seed modulo 10000 produces identical volumetric fBm output */
     NebelImage out_s1 = {0}, out_s2 = {0};
@@ -492,7 +579,25 @@ static void test_undo_touch_ui_manifest(void) {
     nebel_ui_end_frame(&ui);
     nebel_ui_begin_frame(&ui, 800, 600, 50, 20, false, false, true);
     CHECK(nebel_ui_button(&ui, 7, 10, 5, 80, 30, "Go", false, -1));
+    CHECK(ui.last_hovered);
     nebel_ui_end_frame(&ui);
+
+    /* UTF-8 codepoint counting, accent button, progress bar & viewport-clamped German/Polish tooltip */
+    CHECK(nebel_utf8_char_count("Größe Łódź") == 10);
+    CHECK(nebel_utf8_char_count(NULL) == 0);
+    nebel_ui_begin_frame(&ui, 640, 400, 630, 390, false, false, false);
+    nebel_ui_accent_button(&ui, 9, 550, 360, 86, 30, "Rendern *", true, -1);
+    nebel_ui_accent_button(&ui, 10, 450, 360, 86, 30, "Renderuj", false, -1);
+    nebel_ui_progress_bar(&ui, 10, 370, 300, 20, 0.55f, "Berechne HD-Tiefe...");
+    nebel_ui_tooltip(&ui, "Verlustfreies 16-Bit-TIFF für Lightroom, Darktable & Druck (Größe Łódź)\nZweite Zeile");
+    nebel_ui_end_frame(&ui);
+    CHECK(ui.cmd_count > 6);
+    for (int i = 0; i < ui.cmd_count; i++) {
+        if (ui.cmds[i].type == NEBEL_UI_CMD_RECT) {
+            CHECK(ui.cmds[i].x >= 0.0f && ui.cmds[i].x + ui.cmds[i].w <= 641.0f);
+            CHECK(ui.cmds[i].y >= 0.0f && ui.cmds[i].y + ui.cmds[i].h <= 401.0f);
+        }
+    }
 
     /* Manifest & path traversal safety */
     CHECK(nebel_path_is_safe("assets/shaders/fog_layer.frag"));
@@ -692,7 +797,106 @@ static void test_app_and_lua_bridge(void) {
     CHECK(nebel_lua_on_key(&lua, "Z", true, true));
     CHECK(nebel_lua_on_key(&lua, "Y", true, false));
     CHECK(nebel_lua_on_key(&lua, "0", false, false));
+    CHECK(nebel_lua_on_key(&lua, "M", false, false));
+    CHECK(nebel_lua_on_key(&lua, "N", false, false));
+    CHECK(nebel_lua_on_key(&lua, "F", false, false));
+    CHECK(nebel_lua_on_key(&lua, "ENTER", false, false));
+    CHECK(nebel_lua_on_key(&lua, "ESC", false, false));
+    CHECK(nebel_lua_on_key(&lua, "F1", false, false));
     CHECK(nebel_lua_on_key(&lua, "F5", false, false));
+
+    /* 3-tier render budgets across Desktop / Web Desktop / Web Mobile x Fast / Studio / Ultra */
+    const NebelPlatformTier tiers[3] = { NEBEL_TIER_DESKTOP, NEBEL_TIER_WEB_DESKTOP, NEBEL_TIER_WEB_MOBILE };
+    const NebelQualityPreset quals[3] = { NEBEL_QUALITY_FAST, NEBEL_QUALITY_STUDIO, NEBEL_QUALITY_ULTRA };
+    for (int ti = 0; ti < 3; ti++) {
+        nebel_app_set_platform_tier(&app, tiers[ti]);
+        for (int qi = 0; qi < 3; qi++) {
+            nebel_app_set_quality(&app, quals[qi]);
+            int s = 0, sl = 0, sh = 0, fl = 0, tg = 0;
+            nebel_app_get_render_budget(&app, &s, &sl, &sh, &fl, &tg);
+            CHECK(s >= 1 && sl >= 6 && sh >= 4 && fl >= 2 && tg >= 1);
+        }
+    }
+    nebel_app_set_platform_tier(&app, NEBEL_TIER_DESKTOP);
+    nebel_app_set_quality(&app, NEBEL_QUALITY_STUDIO);
+    nebel_app_set_gpu_backend(&app, "OpenGL 3.3 + CUDA");
+    nebel_app_set_lang(&app, "de"); CHECK(strcmp(app.lang, "de") == 0);
+    nebel_app_set_lang(&app, "pl"); CHECK(strcmp(app.lang, "pl") == 0);
+    nebel_app_set_lang(&app, "xx"); CHECK(strcmp(app.lang, "en") == 0);
+
+    /* Mark -> Render -> Cancel -> PatchFusion HD Depth -> Depth Brush strokes */
+    app.depth_is_hd = false;
+    nebel_app_render_start(&app);
+    CHECK(app.render_phase == NEBEL_PHASE_DEPTH && app.req_hd_depth);
+    float fg_d[8 * 8], ft_d[8 * 8];
+    for (int i = 0; i < 64; i++) { fg_d[i] = (float)i / 63.0f; ft_d[i] = fg_d[i] * 1.5f + 0.2f; }
+    NebelDepthTile ft = { ft_d, 8, 8, 0.0f, 0.0f, 1.0f, 1.0f };
+    CHECK(nebel_app_set_external_depth_fused(&app, fg_d, 8, 8, &ft, 1));
+    CHECK(app.depth_is_hd && app.render_phase == NEBEL_PHASE_FLUID);
+    nebel_app_render_cancel(&app);
+    CHECK(app.render_phase == NEBEL_PHASE_MARK && app.render_dirty);
+    nebel_app_render_start(&app);
+    CHECK(app.render_phase == NEBEL_PHASE_FLUID);
+    nebel_app_render_cancel(&app);
+
+    /* Depth Closer / Farther brush strokes */
+    app.active_tool = NEBEL_TOOL_DEPTH_NEAR;
+    nebel_app_stroke_begin(&app, 0.5f, 0.5f);
+    nebel_app_stroke_move(&app, 0.55f, 0.5f);
+    nebel_app_stroke_end(&app);
+    app.active_tool = NEBEL_TOOL_DEPTH_FAR;
+    nebel_app_stroke_begin(&app, 0.5f, 0.5f);
+    nebel_app_stroke_move(&app, 0.45f, 0.5f);
+    nebel_app_stroke_end(&app);
+
+    /* Lua v3 render/platform/ui APIs + complete EN / DE / PL locale key parity */
+    const char *v3_lua =
+        "assert(nebel.platform.set_tier('web_desktop') and nebel.platform.tier() == 'web_desktop')\n"
+        "assert(nebel.platform.set_tier('web_mobile') and nebel.platform.tier() == 'web_mobile')\n"
+        "assert(nebel.platform.set_tier('desktop') and nebel.platform.tier() == 'desktop')\n"
+        "assert(not nebel.platform.set_tier('invalid'))\n"
+        "assert(#nebel.platform.gpu_backend() > 0)\n"
+        "assert(nebel.render.set_quality('fast') and nebel.render.quality() == 'fast')\n"
+        "assert(nebel.render.set_quality('ultra') and nebel.render.quality() == 'ultra')\n"
+        "assert(nebel.render.set_quality('studio') and nebel.render.quality() == 'studio')\n"
+        "assert(not nebel.render.set_quality('invalid'))\n"
+        "nebel.render.start(); assert(nebel.render.phase() ~= 'mark')\n"
+        "nebel.render.cancel(); assert(nebel.render.phase() == 'mark' and nebel.render.is_dirty())\n"
+        "local sd, st = nebel.render.samples(); assert(st >= 1 and nebel.render.progress() >= 0)\n"
+        "assert(nebel.brush.set_tool('depth_near') and nebel.brush.get_tool() == 'depth_near')\n"
+        "assert(nebel.brush.set_tool('depth_far') and nebel.brush.get_tool() == 'depth_far')\n"
+        "assert(nebel.brush.set_tool('fog'))\n"
+        "nebel.view.set_show_mask(true); assert(nebel.view.show_mask())\n"
+        "nebel.view.set_show_mask(false); assert(not nebel.view.show_mask())\n"
+        "assert(type(nebel.view.is_hd_depth()) == 'boolean')\n"
+        "assert(nebel.layers.set(1, 'fluid_flow', 0.7) and nebel.layers.set(1, 'delight_strength', 0.5))\n"
+        "assert(math.abs(nebel.layers.get(1, 'fluid_flow') - 0.7) < 0.01)\n"
+        "assert(math.abs(nebel.layers.get(1, 'delight_strength') - 0.5) < 0.01)\n"
+        "nebel.platform.open_help('de')\n"
+        "local i18n = require('i18n')\n"
+        "local en = i18n.get_table('en'); local de = i18n.get_table('de'); local pl = i18n.get_table('pl')\n"
+        "assert(en and de and pl)\n"
+        "for k, v in pairs(en) do\n"
+        "  assert(type(de[k]) == 'string' and #de[k] > 0, 'Missing DE key: ' .. k)\n"
+        "  assert(type(pl[k]) == 'string' and #pl[k] > 0, 'Missing PL key: ' .. k)\n"
+        "end\n"
+        "i18n.set_lang('de'); assert(i18n.lang() == 'de'); assert(i18n.cycle() == 'pl'); assert(i18n.cycle() == 'en')\n";
+    CHECK(nebel_lua_eval(&lua, v3_lua));
+
+    /* Exercise Lua UI drawing in DE and PL + progress bar + tooltip + modal flag */
+    nebel_app_set_lang(&app, "de");
+    app.render_phase = NEBEL_PHASE_RENDERING;
+    app.render_samples_done = 4; app.render_samples_total = 32; app.render_progress = 0.6f;
+    nebel_ui_begin_frame(&app.ui, 1280, 760, 120, 20, false, false, false);
+    CHECK(nebel_lua_on_ui(&lua, 1280, 760));
+    nebel_ui_end_frame(&app.ui);
+    CHECK(app.ui.cmd_count > 10);
+
+    nebel_app_set_lang(&app, "pl");
+    nebel_ui_begin_frame(&app.ui, 1280, 760, 120, 20, false, false, false);
+    CHECK(nebel_lua_eval(&lua, "nebel.ui.set_modal(true); nebel.ui.set_modal(false)"));
+    CHECK(nebel_lua_on_ui(&lua, 1280, 760));
+    nebel_ui_end_frame(&app.ui);
 
     nebel_lua_free(&lua);
     nebel_app_free(&app);

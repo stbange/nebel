@@ -8,7 +8,9 @@ typedef enum {
     NEBEL_TOOL_FOG = 0,
     NEBEL_TOOL_ERASER = 1,
     NEBEL_TOOL_PROTECT = 2,
-    NEBEL_TOOL_SUN = 3
+    NEBEL_TOOL_SUN = 3,
+    NEBEL_TOOL_DEPTH_NEAR = 4,
+    NEBEL_TOOL_DEPTH_FAR = 5
 } NebelTool;
 
 typedef struct {

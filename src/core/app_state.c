@@ -42,7 +42,19 @@ void nebel_app_init(NebelAppState *app, const char *asset_root) {
     app->zoom = 1.0f;
     app->split_pos = 0.5f;
     app->req_jpg_quality = 92;
-    nebel_app_set_status(app, "Ready - open a photo or load a sample");
+#if defined(__EMSCRIPTEN__)
+    app->platform_tier = NEBEL_TIER_WEB_DESKTOP;
+    snprintf(app->gpu_backend, sizeof(app->gpu_backend), "WebGL2");
+#else
+    app->platform_tier = NEBEL_TIER_DESKTOP;
+    snprintf(app->gpu_backend, sizeof(app->gpu_backend), "OpenGL 3.3 GPU");
+#endif
+    app->quality = NEBEL_QUALITY_STUDIO;
+    app->render_phase = NEBEL_PHASE_MARK;
+    app->render_dirty = true;
+    app->show_mask_overlay = true;
+    snprintf(app->lang, sizeof(app->lang), "en");
+    nebel_app_set_status(app, "Ready - mark fog area and press Render");
 }
 
 void nebel_app_free(NebelAppState *app) {
@@ -56,6 +68,116 @@ void nebel_app_set_status(NebelAppState *app, const char *msg) {
     snprintf(app->status_msg, sizeof(app->status_msg), "%s", msg);
 }
 
+void nebel_app_set_platform_tier(NebelAppState *app, NebelPlatformTier tier) {
+    if (!app) return;
+    app->platform_tier = tier;
+    if (tier == NEBEL_TIER_WEB_MOBILE) {
+        app->touch.touch_mode = true;
+    }
+}
+
+void nebel_app_set_quality(NebelAppState *app, NebelQualityPreset quality) {
+    if (!app) return;
+    if (quality < NEBEL_QUALITY_FAST) quality = NEBEL_QUALITY_FAST;
+    if (quality > NEBEL_QUALITY_ULTRA) quality = NEBEL_QUALITY_ULTRA;
+    if (app->quality != quality) {
+        app->quality = quality;
+        nebel_app_mark_dirty(app);
+    }
+}
+
+void nebel_app_set_lang(NebelAppState *app, const char *lang) {
+    if (!app || !lang) return;
+    if (strncmp(lang, "de", 2) == 0) {
+        snprintf(app->lang, sizeof(app->lang), "de");
+    } else if (strncmp(lang, "pl", 2) == 0) {
+        snprintf(app->lang, sizeof(app->lang), "pl");
+    } else {
+        snprintf(app->lang, sizeof(app->lang), "en");
+    }
+}
+
+void nebel_app_set_gpu_backend(NebelAppState *app, const char *backend) {
+    if (!app || !backend || !backend[0]) return;
+    snprintf(app->gpu_backend, sizeof(app->gpu_backend), "%s", backend);
+}
+
+void nebel_app_get_render_budget(const NebelAppState *app,
+                                 int *out_samples, int *out_slices,
+                                 int *out_shadow_steps, int *out_fluid_steps,
+                                 int *out_tile_grid) {
+    NebelPlatformTier tier = app ? app->platform_tier : NEBEL_TIER_DESKTOP;
+    NebelQualityPreset q = app ? app->quality : NEBEL_QUALITY_STUDIO;
+
+    int samples = 32, slices = 16, shadows = 12, fluid = 20, tiles = 2;
+    if (tier == NEBEL_TIER_DESKTOP) {
+        if (q == NEBEL_QUALITY_FAST)        { samples = 8;  slices = 10; shadows = 8;  fluid = 8;  tiles = 1; }
+        else if (q == NEBEL_QUALITY_STUDIO) { samples = 32; slices = 16; shadows = 12; fluid = 20; tiles = 2; }
+        else                                { samples = 64; slices = 24; shadows = 16; fluid = 32; tiles = 3; }
+    } else if (tier == NEBEL_TIER_WEB_DESKTOP) {
+        if (q == NEBEL_QUALITY_FAST)        { samples = 2;  slices = 8;  shadows = 6;  fluid = 4;  tiles = 1; }
+        else if (q == NEBEL_QUALITY_STUDIO) { samples = 6;  slices = 12; shadows = 8;  fluid = 10; tiles = 2; }
+        else                                { samples = 12; slices = 16; shadows = 10; fluid = 14; tiles = 2; }
+    } else {
+        /* Web Mobile: thermal & RAM safe */
+        if (q == NEBEL_QUALITY_FAST)        { samples = 1;  slices = 6;  shadows = 4;  fluid = 2;  tiles = 1; }
+        else if (q == NEBEL_QUALITY_STUDIO) { samples = 2;  slices = 8;  shadows = 6;  fluid = 4;  tiles = 1; }
+        else                                { samples = 4;  slices = 10; shadows = 8;  fluid = 6;  tiles = 1; }
+    }
+
+    if (out_samples)      *out_samples = samples;
+    if (out_slices)       *out_slices = slices;
+    if (out_shadow_steps) *out_shadow_steps = shadows;
+    if (out_fluid_steps)  *out_fluid_steps = fluid;
+    if (out_tile_grid)    *out_tile_grid = tiles;
+}
+
+void nebel_app_mark_dirty(NebelAppState *app) {
+    if (!app) return;
+    app->render_dirty = true;
+    app->dirty_fluid_gpu = true;
+    if (app->render_phase == NEBEL_PHASE_DONE || app->render_phase == NEBEL_PHASE_RENDERING ||
+        app->render_phase == NEBEL_PHASE_FLUID) {
+        app->render_phase = NEBEL_PHASE_MARK;
+        app->render_progress = 0.0f;
+        app->render_samples_done = 0;
+        app->show_mask_overlay = true;
+    }
+}
+
+void nebel_app_render_start(NebelAppState *app) {
+    if (!app || app->work_img.width <= 0) return;
+    int samples = 16, tiles = 1;
+    nebel_app_get_render_budget(app, &samples, NULL, NULL, NULL, &tiles);
+    app->render_samples_total = samples;
+    app->render_samples_done = 0;
+    app->render_progress = 0.02f;
+    app->dirty_fluid_gpu = true;
+    app->show_mask_overlay = false;
+
+    /* Run HD depth pass first if not yet computed at neural/tiled HD quality */
+    if (!app->depth_is_hd && !app->depth_job_running && tiles >= 1) {
+        app->req_hd_depth = true;
+        app->render_phase = NEBEL_PHASE_DEPTH;
+    } else {
+        app->render_phase = NEBEL_PHASE_FLUID;
+    }
+}
+
+void nebel_app_render_cancel(NebelAppState *app) {
+    if (!app) return;
+    if (app->render_phase == NEBEL_PHASE_DEPTH ||
+        app->render_phase == NEBEL_PHASE_FLUID ||
+        app->render_phase == NEBEL_PHASE_RENDERING) {
+        app->render_phase = NEBEL_PHASE_MARK;
+        app->render_progress = 0.0f;
+        app->render_samples_done = 0;
+        app->render_dirty = true;
+        app->req_hd_depth = false;
+        app->show_mask_overlay = true;
+    }
+}
+
 static void push_undo(NebelAppState *app) {
     if (app->work_img.width <= 0 || app->layer_count <= 0) return;
     nebel_undo_push(&app->undo, app->layers, app->layer_count, app->active_layer,
@@ -65,10 +187,13 @@ static void push_undo(NebelAppState *app) {
 bool nebel_app_load_image(NebelAppState *app, const NebelImage *img) {
     if (!app || !img || !img->rgba || img->width <= 0 || img->height <= 0) return false;
 
+    int max_dim = (app->platform_tier == NEBEL_TIER_WEB_MOBILE)
+        ? NEBEL_MOBILE_WORK_MAX_DIM : NEBEL_WORK_MAX_DIM;
+
     NebelImage orig_copy = {0};
     NebelImage work_copy = {0};
     if (!nebel_image_clone(img, &orig_copy)) return false;
-    if (!nebel_image_downsample(&orig_copy, &work_copy, NEBEL_WORK_MAX_DIM)) {
+    if (!nebel_image_downsample(&orig_copy, &work_copy, max_dim)) {
         nebel_image_free(&orig_copy);
         return false;
     }
@@ -91,6 +216,8 @@ bool nebel_app_load_image(NebelAppState *app, const NebelImage *img) {
     app->protect_mask = prot;
     app->stroke_backup = bak;
     app->depth_is_neural = false;
+    app->depth_is_hd = false;
+    app->depth_job_running = false;
     app->sensor_noise = nebel_image_estimate_noise(&app->work_img);
     app->zoom = 1.0f;
     app->pan_x = 0.0f;
@@ -108,11 +235,19 @@ bool nebel_app_load_image(NebelAppState *app, const NebelImage *img) {
     app->dirty_photo_gpu = true;
     app->dirty_masks_gpu = true;
     app->dirty_depth_gpu = true;
+    app->dirty_fluid_gpu = true;
+    app->render_phase = NEBEL_PHASE_MARK;
+    app->render_dirty = true;
+    app->render_progress = 0.0f;
+    app->render_samples_done = 0;
+    app->show_mask_overlay = true;
+
 #if defined(__EMSCRIPTEN__)
     app->req_auto_depth = true;
-    nebel_app_set_status(app, "Photo loaded - analyzing 3D depth...");
+    nebel_app_set_status(app, "Photo loaded - mark fog area and click Render");
 #else
-    nebel_app_set_status(app, "Photo loaded (classical depth ready)");
+    app->req_auto_depth = true;
+    nebel_app_set_status(app, "Photo loaded - mark fog area and click Render");
 #endif
     return true;
 }
@@ -155,6 +290,7 @@ int nebel_app_add_layer(NebelAppState *app, const char *name) {
     app->layer_count++;
     app->active_layer = idx;
     app->dirty_masks_gpu = true;
+    nebel_app_mark_dirty(app);
     push_undo(app);
     return idx;
 }
@@ -169,6 +305,7 @@ bool nebel_app_remove_layer(NebelAppState *app, int index) {
     app->layer_count--;
     if (app->active_layer >= app->layer_count) app->active_layer = app->layer_count - 1;
     app->dirty_masks_gpu = true;
+    nebel_app_mark_dirty(app);
     push_undo(app);
     return true;
 }
@@ -203,6 +340,8 @@ bool nebel_app_set_layer_param(NebelAppState *app, int index, const char *key, f
     else if (strcmp(key, "bloom_amount") == 0) p->bloom_amount = value;
     else if (strcmp(key, "god_rays") == 0) p->god_rays = value;
     else if (strcmp(key, "shadow_pool") == 0) p->shadow_pool = value;
+    else if (strcmp(key, "fluid_flow") == 0) p->fluid_flow = value;
+    else if (strcmp(key, "delight_strength") == 0) p->delight_strength = value;
     else if (strcmp(key, "grain_match") == 0) p->grain_match = value;
     else if (strcmp(key, "edge_refine") == 0) {
         p->edge_refine = value;
@@ -213,6 +352,7 @@ bool nebel_app_set_layer_param(NebelAppState *app, int index, const char *key, f
     else return false;
 
     nebel_fog_params_clamp(p);
+    nebel_app_mark_dirty(app);
     return true;
 }
 
@@ -237,6 +377,8 @@ bool nebel_app_get_layer_param(const NebelAppState *app, int index, const char *
     else if (strcmp(key, "bloom_amount") == 0) *out_val = p->bloom_amount;
     else if (strcmp(key, "god_rays") == 0) *out_val = p->god_rays;
     else if (strcmp(key, "shadow_pool") == 0) *out_val = p->shadow_pool;
+    else if (strcmp(key, "fluid_flow") == 0) *out_val = p->fluid_flow;
+    else if (strcmp(key, "delight_strength") == 0) *out_val = p->delight_strength;
     else if (strcmp(key, "grain_match") == 0) *out_val = p->grain_match;
     else if (strcmp(key, "edge_refine") == 0) *out_val = p->edge_refine;
     else if (strcmp(key, "noise_seed") == 0) *out_val = (float)p->noise_seed;
@@ -249,17 +391,18 @@ bool nebel_app_clear_layer_mask(NebelAppState *app, int index) {
     if (!app || index < 0 || index >= app->layer_count) return false;
     nebel_fog_layer_clear_mask(&app->layers[index]);
     app->dirty_masks_gpu = true;
+    nebel_app_mark_dirty(app);
     push_undo(app);
     return true;
 }
 
 void nebel_app_canvas_rect(const NebelAppState *app, int vw, int vh,
                            float *out_x, float *out_y, float *out_w, float *out_h) {
-    float top_bar = 48.0f;
-    float side_w = (app && app->touch.touch_mode) ? 0.0f : 290.0f;
-    float bot_h = (app && app->touch.touch_mode) ? 140.0f : 24.0f;
+    float top_bar = (app && app->touch.touch_mode) ? 54.0f : 48.0f;
+    float side_w = (app && app->touch.touch_mode) ? 0.0f : 292.0f;
+    float bot_h = (app && app->touch.touch_mode) ? 148.0f : 30.0f;
     float avail_w = (float)vw - side_w - 24.0f;
-    float avail_h = (float)vh - top_bar - bot_h - 16.0f;
+    float avail_h = (float)vh - top_bar - bot_h - 14.0f;
     if (avail_w < 64.0f) avail_w = 64.0f;
     if (avail_h < 64.0f) avail_h = 64.0f;
 
@@ -270,7 +413,7 @@ void nebel_app_canvas_rect(const NebelAppState *app, int vw, int vh,
     float cw = iw * fit * zoom;
     float ch = ih * fit * zoom;
     float cx = 12.0f + (avail_w - cw) * 0.5f + (app ? app->pan_x : 0.0f);
-    float cy = top_bar + 8.0f + (avail_h - ch) * 0.5f + (app ? app->pan_y : 0.0f);
+    float cy = top_bar + 6.0f + (avail_h - ch) * 0.5f + (app ? app->pan_y : 0.0f);
     if (out_x) *out_x = cx;
     if (out_y) *out_y = cy;
     if (out_w) *out_w = cw;
@@ -302,6 +445,21 @@ void nebel_app_stroke_begin(NebelAppState *app, float u, float v) {
         app->layers[app->active_layer].params.sun_x = clampf(u, 0.0f, 1.0f);
         app->layers[app->active_layer].params.sun_y = clampf(v, 0.0f, 1.0f);
         app->stroke_in_progress = true;
+        nebel_app_mark_dirty(app);
+        return;
+    }
+
+    if ((app->active_tool == NEBEL_TOOL_DEPTH_NEAR || app->active_tool == NEBEL_TOOL_DEPTH_FAR) &&
+        app->depth_map) {
+        app->stroke_in_progress = true;
+        app->last_stroke_x = u;
+        app->last_stroke_y = v;
+        nebel_depth_paint_brush(app->depth_map, app->work_img.width, app->work_img.height,
+                                u, v, u, v, app->brush.radius, app->brush.opacity,
+                                app->active_tool == NEBEL_TOOL_DEPTH_NEAR);
+        app->dirty_depth_gpu = true;
+        app->depth_is_neural = true; /* Prevent classical depth recompute from wiping manual edits */
+        nebel_app_mark_dirty(app);
         return;
     }
 
@@ -345,6 +503,7 @@ void nebel_app_stroke_begin(NebelAppState *app, float u, float v) {
     nebel_brush_stroke(mask, app->work_img.width, app->work_img.height,
                        u, v, u, v, &app->brush, erase);
     app->dirty_masks_gpu = true;
+    nebel_app_mark_dirty(app);
     nebel_app_queue_audio(app, "assets/sounds/brush_soft.wav", 0.35f);
 }
 
@@ -353,6 +512,20 @@ void nebel_app_stroke_move(NebelAppState *app, float u, float v) {
     if (app->active_tool == NEBEL_TOOL_SUN) {
         app->layers[app->active_layer].params.sun_x = clampf(u, 0.0f, 1.0f);
         app->layers[app->active_layer].params.sun_y = clampf(v, 0.0f, 1.0f);
+        nebel_app_mark_dirty(app);
+        return;
+    }
+
+    if ((app->active_tool == NEBEL_TOOL_DEPTH_NEAR || app->active_tool == NEBEL_TOOL_DEPTH_FAR) &&
+        app->depth_map) {
+        nebel_depth_paint_brush(app->depth_map, app->work_img.width, app->work_img.height,
+                                app->last_stroke_x, app->last_stroke_y, u, v,
+                                app->brush.radius, app->brush.opacity,
+                                app->active_tool == NEBEL_TOOL_DEPTH_NEAR);
+        app->last_stroke_x = u;
+        app->last_stroke_y = v;
+        app->dirty_depth_gpu = true;
+        nebel_app_mark_dirty(app);
         return;
     }
 
@@ -364,6 +537,7 @@ void nebel_app_stroke_move(NebelAppState *app, float u, float v) {
     app->last_stroke_x = u;
     app->last_stroke_y = v;
     app->dirty_masks_gpu = true;
+    nebel_app_mark_dirty(app);
 }
 
 void nebel_app_stroke_end(NebelAppState *app) {
@@ -375,7 +549,10 @@ void nebel_app_stroke_end(NebelAppState *app) {
 void nebel_app_stroke_cancel(NebelAppState *app) {
     if (!app || !app->stroke_in_progress) return;
     app->stroke_in_progress = false;
-    if (app->active_tool != NEBEL_TOOL_SUN && app->stroke_backup) {
+    if (app->active_tool != NEBEL_TOOL_SUN &&
+        app->active_tool != NEBEL_TOOL_DEPTH_NEAR &&
+        app->active_tool != NEBEL_TOOL_DEPTH_FAR &&
+        app->stroke_backup) {
         uint8_t *mask = active_stroke_mask(app);
         if (mask) {
             size_t sz = (size_t)app->work_img.width * (size_t)app->work_img.height;
@@ -392,6 +569,7 @@ bool nebel_app_undo(NebelAppState *app) {
         return false;
     }
     app->dirty_masks_gpu = true;
+    nebel_app_mark_dirty(app);
     nebel_app_queue_audio(app, "assets/sounds/ui_click.wav", 0.35f);
     return true;
 }
@@ -403,6 +581,7 @@ bool nebel_app_redo(NebelAppState *app) {
         return false;
     }
     app->dirty_masks_gpu = true;
+    nebel_app_mark_dirty(app);
     nebel_app_queue_audio(app, "assets/sounds/ui_click.wav", 0.35f);
     return true;
 }
@@ -415,6 +594,7 @@ bool nebel_app_compute_classical_depth(NebelAppState *app) {
     if (ok) {
         app->depth_is_neural = false;
         app->dirty_depth_gpu = true;
+        app->dirty_fluid_gpu = true;
     }
     return ok;
 }
@@ -425,7 +605,44 @@ bool nebel_app_set_external_depth(NebelAppState *app, const float *raw_depth, in
     if (ok) {
         app->depth_is_neural = true;
         app->dirty_depth_gpu = true;
-        nebel_app_set_status(app, "Auto Depth applied (ONNX + Guided Filter)");
+        app->dirty_fluid_gpu = true;
+        app->depth_job_running = false;
+        if (app->render_phase == NEBEL_PHASE_DEPTH) {
+            app->depth_is_hd = true;
+            app->render_phase = NEBEL_PHASE_FLUID;
+            app->render_progress = 0.35f;
+        }
+        nebel_app_set_status(app, "AI Depth applied (RGB Guided Filter)");
+    }
+    return ok;
+}
+
+bool nebel_app_set_external_depth_fused(NebelAppState *app,
+                                        const float *global_depth, int gw, int gh,
+                                        const NebelDepthTile *tiles, int tile_count) {
+    if (!app || !app->work_img.rgba || !app->depth_map || !global_depth) return false;
+    int w = app->work_img.width;
+    int h = app->work_img.height;
+    float *fused = (float *)malloc((size_t)w * (size_t)h * sizeof(float));
+    if (!fused) return false;
+
+    bool ok = nebel_depth_fuse_tiles(global_depth, gw, gh, tiles, tile_count, w, h, fused);
+    if (ok) {
+        ok = nebel_depth_refine_external(&app->work_img, fused, w, h, app->depth_map);
+    }
+    free(fused);
+
+    if (ok) {
+        app->depth_is_neural = true;
+        app->depth_is_hd = true;
+        app->dirty_depth_gpu = true;
+        app->dirty_fluid_gpu = true;
+        app->depth_job_running = false;
+        if (app->render_phase == NEBEL_PHASE_DEPTH) {
+            app->render_phase = NEBEL_PHASE_FLUID;
+            app->render_progress = 0.38f;
+        }
+        nebel_app_set_status(app, "HD PatchFusion Depth applied (RGB Guided Filter)");
     }
     return ok;
 }
@@ -433,6 +650,7 @@ bool nebel_app_set_external_depth(NebelAppState *app, const float *raw_depth, in
 void nebel_app_sample_airlight(NebelAppState *app, float u, float v) {
     if (!app || !app->work_img.rgba || app->layer_count <= 0) return;
     nebel_image_sample_airlight(&app->work_img, u, v, app->layers[app->active_layer].params.airlight);
+    nebel_app_mark_dirty(app);
 }
 
 void nebel_app_handle_gesture(NebelAppState *app, int vw, int vh, NebelGestureAction act) {
@@ -440,7 +658,8 @@ void nebel_app_handle_gesture(NebelAppState *app, int vw, int vh, NebelGestureAc
     float u = 0.0f, v = 0.0f;
     switch (act.type) {
     case NEBEL_GESTURE_STROKE_BEGIN:
-        if (!app->ui.pointer_over_ui && nebel_app_screen_to_photo(app, vw, vh, act.x, act.y, &u, &v)) {
+        if (!app->ui.pointer_over_ui && !app->ui.modal_active &&
+            nebel_app_screen_to_photo(app, vw, vh, act.x, act.y, &u, &v)) {
             nebel_app_stroke_begin(app, u, v);
         }
         break;
@@ -482,11 +701,13 @@ void nebel_app_queue_audio(NebelAppState *app, const char *rel_path, float gain)
 
 bool nebel_app_render_full(const NebelAppState *app, NebelImage *out) {
     if (!app || !app->orig_img.rgba || !out) return false;
-    return nebel_fog_render_cpu(&app->orig_img,
-                                app->depth_map, app->work_img.width, app->work_img.height,
-                                app->protect_mask, app->work_img.width, app->work_img.height,
-                                app->layers, app->layer_count,
-                                app->sensor_noise, out);
+    NebelRenderQuality rq = {0};
+    nebel_app_get_render_budget(app, NULL, &rq.ray_slices, &rq.shadow_steps, &rq.fluid_steps, NULL);
+    return nebel_fog_render_cpu_ex(&app->orig_img,
+                                   app->depth_map, app->work_img.width, app->work_img.height,
+                                   app->protect_mask, app->work_img.width, app->work_img.height,
+                                   app->layers, app->layer_count,
+                                   app->sensor_noise, &rq, out);
 }
 
 bool nebel_app_export_png(const NebelAppState *app, const char *path) {

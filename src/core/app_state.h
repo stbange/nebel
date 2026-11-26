@@ -2,6 +2,7 @@
 #define NEBEL_CORE_APP_STATE_H
 
 #include "core/brush.h"
+#include "core/cv_depth.h"
 #include "core/fog_layer.h"
 #include "core/image.h"
 #include "core/touch.h"
@@ -12,7 +13,28 @@
 #include <stdint.h>
 
 #define NEBEL_WORK_MAX_DIM 2048
+#define NEBEL_MOBILE_WORK_MAX_DIM 1536
 #define NEBEL_AUDIO_QUEUE_MAX 8
+
+typedef enum {
+    NEBEL_TIER_DESKTOP = 0,
+    NEBEL_TIER_WEB_DESKTOP = 1,
+    NEBEL_TIER_WEB_MOBILE = 2
+} NebelPlatformTier;
+
+typedef enum {
+    NEBEL_QUALITY_FAST = 0,
+    NEBEL_QUALITY_STUDIO = 1,
+    NEBEL_QUALITY_ULTRA = 2
+} NebelQualityPreset;
+
+typedef enum {
+    NEBEL_PHASE_MARK = 0,
+    NEBEL_PHASE_DEPTH = 1,
+    NEBEL_PHASE_FLUID = 2,
+    NEBEL_PHASE_RENDERING = 3,
+    NEBEL_PHASE_DONE = 4
+} NebelRenderPhase;
 
 typedef struct {
     char path[128];
@@ -25,9 +47,10 @@ typedef struct {
     NebelImage work_img;
     float sensor_noise;
 
-    float *depth_map;     /* work_img.width * work_img.height */
+    float *depth_map;      /* work_img.width * work_img.height */
     bool depth_is_neural;
-    uint8_t *protect_mask;/* work_img.width * work_img.height */
+    bool depth_is_hd;
+    uint8_t *protect_mask; /* work_img.width * work_img.height */
 
     NebelFogLayer layers[NEBEL_MAX_LAYERS];
     int layer_count;
@@ -45,6 +68,19 @@ typedef struct {
     bool split_enabled;
     float split_pos; /* [0, 1] */
     bool show_depth;
+    bool show_mask_overlay;
+
+    /* 3-Tier hardware & Mark -> Render progressive state machine */
+    NebelPlatformTier platform_tier;
+    NebelQualityPreset quality;
+    NebelRenderPhase render_phase;
+    bool render_dirty;
+    float render_progress; /* [0, 1] */
+    int render_samples_done;
+    int render_samples_total;
+    bool depth_job_running;
+    char gpu_backend[64];
+    char lang[8];
 
     NebelUndoStack undo;
     NebelTouchState touch;
@@ -54,7 +90,7 @@ typedef struct {
     NebelAudioEvent audio_queue[NEBEL_AUDIO_QUEUE_MAX];
     int audio_queue_count;
 
-    /* Requests queued by Lua for platform host (file dialog, ONNX auto-depth, script reload) */
+    /* Requests queued by Lua for platform host */
     bool req_open_dialog;
     bool req_export_png;
     bool req_export_jpg;
@@ -62,16 +98,32 @@ typedef struct {
     bool req_export_tiff16;
     int req_jpg_quality;
     bool req_auto_depth;
+    bool req_hd_depth;
     bool req_reload_scripts;
+    char req_open_url[256];
 
     bool dirty_photo_gpu;
     bool dirty_masks_gpu;
     bool dirty_depth_gpu;
+    bool dirty_fluid_gpu;
     char status_msg[128];
 } NebelAppState;
 
 void nebel_app_init(NebelAppState *app, const char *asset_root);
 void nebel_app_free(NebelAppState *app);
+
+void nebel_app_set_platform_tier(NebelAppState *app, NebelPlatformTier tier);
+void nebel_app_set_quality(NebelAppState *app, NebelQualityPreset quality);
+void nebel_app_set_lang(NebelAppState *app, const char *lang);
+void nebel_app_set_gpu_backend(NebelAppState *app, const char *backend);
+void nebel_app_get_render_budget(const NebelAppState *app,
+                                 int *out_samples, int *out_slices,
+                                 int *out_shadow_steps, int *out_fluid_steps,
+                                 int *out_tile_grid);
+
+void nebel_app_render_start(NebelAppState *app);
+void nebel_app_render_cancel(NebelAppState *app);
+void nebel_app_mark_dirty(NebelAppState *app);
 
 bool nebel_app_load_image(NebelAppState *app, const NebelImage *img);
 bool nebel_app_load_image_file(NebelAppState *app, const char *path);
@@ -100,6 +152,9 @@ bool nebel_app_redo(NebelAppState *app);
 
 bool nebel_app_compute_classical_depth(NebelAppState *app);
 bool nebel_app_set_external_depth(NebelAppState *app, const float *raw_depth, int w, int h);
+bool nebel_app_set_external_depth_fused(NebelAppState *app,
+                                        const float *global_depth, int gw, int gh,
+                                        const NebelDepthTile *tiles, int tile_count);
 void nebel_app_sample_airlight(NebelAppState *app, float u, float v);
 
 void nebel_app_handle_gesture(NebelAppState *app, int vw, int vh, NebelGestureAction act);

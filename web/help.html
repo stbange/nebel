@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nebel — Online Help / Hilfe / Pomoc</title>
+  <style>
+    :root {
+      --bg: #0e1116; --panel: #161b22; --border: #2a3441;
+      --text: #e6edf3; --muted: #98a6b8; --accent: #58a6ff; --amber: #e29b38; --green: #3fb950;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.6;
+    }
+    header {
+      position: sticky; top: 0; z-index: 10;
+      background: rgba(14, 17, 22, 0.94); backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border); padding: 14px 20px;
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    }
+    .brand { font-size: 1.25rem; font-weight: 700; letter-spacing: 0.02em; }
+    .brand span { color: var(--accent); font-weight: 500; font-size: 0.92rem; margin-left: 8px; }
+    .lang-bar { display: flex; gap: 8px; align-items: center; }
+    .lang-btn {
+      background: var(--panel); color: var(--text); border: 1px solid var(--border);
+      border-radius: 6px; padding: 6px 12px; cursor: pointer; font-weight: 600; font-size: 0.88rem;
+    }
+    .lang-btn.active { background: var(--accent); color: #081018; border-color: var(--accent); }
+    .back-link {
+      color: var(--accent); text-decoration: none; font-size: 0.9rem; margin-right: 10px;
+    }
+    main { max-width: 920px; margin: 28px auto 64px; padding: 0 20px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 20px 24px; margin-bottom: 18px;
+    }
+    h1 { margin: 0 0 8px; font-size: 1.7rem; }
+    h2 { margin: 0 0 12px; font-size: 1.2rem; color: var(--accent); }
+    h3 { margin: 14px 0 6px; font-size: 1rem; color: #c9d8ea; }
+    p, li { color: #d5dfea; }
+    .muted { color: var(--muted); font-size: 0.93rem; }
+    .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(195px, 1fr)); gap: 12px; margin-top: 12px; }
+    .step { background: #10151c; border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+    .step strong { color: var(--amber); display: block; margin-bottom: 4px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.93rem; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; }
+    kbd {
+      background: #212833; border: 1px solid #3c485a; border-radius: 4px;
+      padding: 1px 6px; font-family: ui-monospace, monospace; font-size: 0.85em;
+    }
+    code {
+      background: #10151c; padding: 2px 6px; border-radius: 4px; font-size: 0.88em; color: #9ecbff;
+    }
+    .lang-section { display: none; }
+    .lang-section.active { display: block; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">Nebel <span>Atmospheric Fog Studio v3</span></div>
+    <div class="lang-bar">
+      <a class="back-link" href="./index.html" id="app-link">← App</a>
+      <button class="lang-btn" data-lang="en" onclick="setLang('en')">English</button>
+      <button class="lang-btn" data-lang="de" onclick="setLang('de')">Deutsch</button>
+      <button class="lang-btn" data-lang="pl" onclick="setLang('pl')">Polski</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ENGLISH -->
+    <div id="sec-en" class="lang-section">
+      <div class="card">
+        <h1>Nebel Photographer Guide</h1>
+        <p class="muted">Physically based 3D volumetric fog for landscape and wildlife photography — zero AI pixel hallucination, lossless 16-bit TIFF export, and GPU-accelerated rendering.</p>
+        <div class="steps">
+          <div class="step"><strong>1. Open &amp; Check Depth (D)</strong>Open a JPEG/PNG or drag it onto the window. Press <kbd>D</kbd> to see the 3D depth map (dark = near, bright = far).</div>
+          <div class="step"><strong>2. Mark Fog Zone (B / P)</strong>Paint fog zones with <b>Fog</b> (<kbd>B</kbd>) and shield foreground details like antlers or pines with <b>Protect</b> (<kbd>P</kbd>).</div>
+          <div class="step"><strong>3. Click Render (Enter)</strong>Press <b>Render</b> to calculate HD tiled depth, terrain valley flow, 3D volumetric shadows, and multi-scatter light.</div>
+          <div class="step"><strong>4. Compare &amp; Export</strong>Press <kbd>Space</kbd> for Before/After Split View and export <b>16-bit TIFF</b> or <b>PNG16</b> for Lightroom/Photoshop.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Platform Tiers (Desktop vs. Web Desktop vs. Web Mobile)</h2>
+        <table>
+          <tr><th>Edition</th><th>Depth Engine (Apache 2.0)</th><th>Volumetric Fog Rendering</th></tr>
+          <tr><td><b>Native Desktop</b> (Win/Mac/Linux)</td><td>GPU ONNX (DirectML / CoreML / CUDA) + 3×3 PatchFusion + optional <code>DA3Mono-Large</code> + RGB Guided Filter + 32-bit float depth</td><td>32-step valley fluid advection + 64-sample progressive GPU volumetric path tracer + tiled GPU 16-bit full-res export</td></tr>
+          <tr><td><b>Web Desktop</b> (Browser)</td><td>WebGPU / WASM ONNX + 2×2 PatchFusion + RGB Guided Filter + 16-bit float depth</td><td>12-step fluid advection + progressive WebGL2 ray-marching with 3D shadow cones</td></tr>
+          <tr><td><b>Web Mobile</b> (Phone/Tablet)</td><td>Fast aspect-preserving ONNX + RGB Guided Filter (phone-RAM safe)</td><td>Touch drawer UI + fast chunked WebGL2 volumetric render</td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Atmosphere Sliders &amp; Depth Tips</h2>
+        <ul>
+          <li><b>Near Depth &amp; AutoLock (<kbd>A</kbd>):</b> Objects closer than Near Depth stay 100% crisp. Turn on <b>AutoLock</b> and click where the mist starts.</li>
+          <li><b>Depth Touch-Up (<kbd>N</kbd> / <kbd>F</kbd>):</b> In Depth View (<kbd>D</kbd>), paint <b>Closer</b> or <b>Farther</b> to fix tricky water reflections or shadows.</li>
+          <li><b>Valley Flow &amp; Shadow Pool:</b> Flows cold mist around foreground trunks and concentrates denser mist inside cool shadowed hollows.</li>
+          <li><b>Shadow Soften:</b> Gently lifts harsh direct sunlight contrast underneath thick fog so sunny photos blend naturally into mist.</li>
+          <li><b>HD Desktop Depth Model:</b> Run <code>scripts/download_hd_depth.sh</code> (Linux/Mac) or <code>scripts/download_hd_depth.ps1</code> (Windows) to install the Apache-2.0 <code>DA3Mono-Large</code> model into <code>assets/models/</code>.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>Keyboard Shortcuts &amp; Touch Gestures</h2>
+        <table>
+          <tr><th>Shortcut</th><th>Action</th></tr>
+          <tr><td><kbd>Enter</kbd> / <kbd>Esc</kbd></td><td>Start Render / Cancel active render (or close Tutorial)</td></tr>
+          <tr><td><kbd>B</kbd> / <kbd>E</kbd> / <kbd>P</kbd> / <kbd>S</kbd></td><td>Fog Marker / Eraser / Protect Foreground / Sun Position</td></tr>
+          <tr><td><kbd>D</kbd> / <kbd>N</kbd> / <kbd>F</kbd></td><td>Toggle Depth View / Depth Closer brush / Depth Farther brush</td></tr>
+          <tr><td><kbd>M</kbd> / <kbd>Space</kbd> / <kbd>A</kbd> / <kbd>R</kbd></td><td>Toggle Mask Overlay / Before-After Split / AutoLock / Randomize Seed</td></tr>
+          <tr><td><kbd>[</kbd> <kbd>]</kbd> / <kbd>Ctrl+Z</kbd> / <kbd>0</kbd> / <kbd>F1</kbd></td><td>Brush Size / Undo / Reset Zoom / Open Online Help</td></tr>
+          <tr><td><b>Mobile Touch</b></td><td>1-finger paint · 2-finger pinch zoom/pan · 2-finger tap Undo · 3-finger tap Redo</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- GERMAN -->
+    <div id="sec-de" class="lang-section">
+      <div class="card">
+        <h1>Nebel — Handbuch für Fotografen</h1>
+        <p class="muted">Physikalisch berechneter 3D-Nebel für Landschafts- und Tierfotografie — ohne KI-Bildverfälschung, mit verlustfreiem 16-Bit-TIFF-Export und GPU-Beschleunigung.</p>
+        <div class="steps">
+          <div class="step"><strong>1. Foto öffnen &amp; Tiefe prüfen (D)</strong>Öffnen Sie ein JPEG/PNG oder ziehen Sie es ins Fenster. Taste <kbd>D</kbd> zeigt die 3D-Tiefenkarte (dunkel = nah, hell = fern).</div>
+          <div class="step"><strong>2. Nebel markieren (B / P)</strong>Malen Sie mit <b>Nebel</b> (<kbd>B</kbd>) die gewünschte Zone und schützen Sie Geweih oder Bäume im Vordergrund mit <b>Schutz</b> (<kbd>P</kbd>).</div>
+          <div class="step"><strong>3. Auf Rendern klicken (Enter)</strong>Startet die HD-Tiefenanalyse, Talströmung, echte 3D-Schattenkegel und Mehrfachstreuung auf der Grafikkarte.</div>
+          <div class="step"><strong>4. Vergleichen &amp; Exportieren</strong><kbd>Leertaste</kbd> zeigt den Vorher-/Nachher-Vergleich. Exportieren Sie verlustfrei als <b>16-Bit-TIFF</b> für Lightroom/Photoshop.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Desktop-Version vs. Web-Desktop vs. Web-Mobil</h2>
+        <table>
+          <tr><th>Version</th><th>Tiefenanalyse (Apache 2.0)</th><th>Nebel-Rendering</th></tr>
+          <tr><td><b>Desktop-App</b> (Win/Mac/Linux)</td><td>GPU-ONNX (DirectML / CoreML / CUDA) + 3×3-Kachelfusion + optional <code>DA3Mono-Large</code> + RGB-Guided-Filter + 32-Bit-Tiefe</td><td>32-Schritte-Talströmung + progressiver 64-Sample-GPU-Volumenrenderer + GPU-Kachel-Export in voller Auflösung</td></tr>
+          <tr><td><b>Web-Desktop</b> (Browser)</td><td>WebGPU / WASM ONNX + 2×2-Kachelfusion + RGB-Guided-Filter + 16-Bit-Tiefe</td><td>12-Schritte-Talströmung + progressives WebGL2-Raymarching mit 3D-Schattenstrahlen</td></tr>
+          <tr><td><b>Web-Mobil</b> (Handy/Tablet)</td><td>Schnelle seitenverhältnistreue KI-Tiefe + RGB-Guided-Filter (speicherschonend)</td><td>Touch-Steuerung + schnelles gestaffeltes WebGL2-Rendering</td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Tipps zu Reglern &amp; Tiefenkarte</h2>
+        <ul>
+          <li><b>Start-Tiefe &amp; Tiefe-Fix (<kbd>A</kbd>):</b> Nähere Motive bleiben 100 % klar. Mit aktiviertem <b>Tiefe-Fix</b> genügt ein Klick an den Beginn der Nebelbank.</li>
+          <li><b>Tiefe korrigieren (<kbd>N</kbd> / <kbd>F</kbd>):</b> In der Tiefenansicht (<kbd>D</kbd>) können Sie Fehler (z. B. Wasserspiegelungen) lokal <b>Näher</b> oder <b>Ferner</b> malen.</li>
+          <li><b>Talströmung &amp; Schattensenke:</b> Lässt kalten Nebel um Bäume herumfließen und sich in schattigen Senken sammeln.</li>
+          <li><b>Schatten mildern:</b> Schwächt harte direkte Sonnenschatten unter dichtem Nebel natürlich ab.</li>
+          <li><b>HD-Modell auf dem Desktop:</b> Mit <code>scripts/download_hd_depth.sh</code> (Linux/Mac) oder <code>scripts/download_hd_depth.ps1</code> (Windows) laden Sie das Apache-2.0-Modell <code>DA3Mono-Large</code> in <code>assets/models/</code>.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>Tastenkürzel &amp; Touch-Gesten</h2>
+        <table>
+          <tr><th>Kürzel</th><th>Funktion</th></tr>
+          <tr><td><kbd>Enter</kbd> / <kbd>Esc</kbd></td><td>Rendern starten / Laufendes Rendern abbrechen (oder Anleitung schließen)</td></tr>
+          <tr><td><kbd>B</kbd> / <kbd>E</kbd> / <kbd>P</kbd> / <kbd>S</kbd></td><td>Nebel-Marker / Radierer / Vordergrund schützen / Sonnenposition</td></tr>
+          <tr><td><kbd>D</kbd> / <kbd>N</kbd> / <kbd>F</kbd></td><td>Tiefenkarte anzeigen / Tiefe näher malen / Tiefe ferner malen</td></tr>
+          <tr><td><kbd>M</kbd> / <kbd>Leertaste</kbd> / <kbd>A</kbd> / <kbd>R</kbd></td><td>Maske ein-/ausblenden / Vorher-Nachher / Tiefe-Fix / Neues Muster</td></tr>
+          <tr><td><kbd>[</kbd> <kbd>]</kbd> / <kbd>Strg+Z</kbd> / <kbd>0</kbd> / <kbd>F1</kbd></td><td>Pinselgröße / Rückgängig / Zoom zurücksetzen / Online-Hilfe</td></tr>
+          <tr><td><b>Touch-Geräte</b></td><td>1 Finger: Malen · 2 Finger spreizen: Zoom/Verschieben · 2-Finger-Tipp: Zurück · 3-Finger-Tipp: Vor</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- POLISH -->
+    <div id="sec-pl" class="lang-section">
+      <div class="card">
+        <h1>Nebel — Poradnik fotografa</h1>
+        <p class="muted">Fizycznie symulowana mgła 3D do fotografii krajobrazowej i przyrodniczej — bez przerabiania detali przez generatywne AI, z bezstratnym eksportem 16-bitowego TIFF i akceleracją GPU.</p>
+        <div class="steps">
+          <div class="step"><strong>1. Otwórz zdjęcie i głębię (D)</strong>Otwórz plik JPEG/PNG lub przeciągnij go na okno. Klawisz <kbd>D</kbd> pokazuje mapę głębi 3D (ciemne = blisko, jasne = daleko).</div>
+          <div class="step"><strong>2. Zaznacz strefę mgły (B / P)</strong>Zamaluj obszar pędzlem <b>Mgła</b> (<kbd>B</kbd>) i zabezpiecz ostre obiekty z przodu pędzlem <b>Chroń</b> (<kbd>P</kbd>).</div>
+          <div class="step"><strong>3. Kliknij Renderuj (Enter)</strong>Uruchamia analizę głębi HD, spływ mgły w dolinach, cienie 3D i wielokrotne rozpraszanie światła na karcie graficznej.</div>
+          <div class="step"><strong>4. Porównaj i eksportuj</strong><kbd>Spacja</kbd> przełącza porównanie Przed/Po. Zapisz bezstratny <b>16-bitowy TIFF</b> lub <b>PNG16</b> do Lightrooma i Photoshopa.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Wersja Desktop vs. Web Desktop vs. Web Mobilny</h2>
+        <table>
+          <tr><th>Wersja</th><th>Analiza głębi (Apache 2.0)</th><th>Renderowanie mgły</th></tr>
+          <tr><td><b>Desktop</b> (Win/Mac/Linux)</td><td>GPU ONNX (DirectML / CoreML / CUDA) + fuzja kafelków 3×3 + opcjonalnie <code>DA3Mono-Large</code> + filtr RGB Guided + 32-bitowa głębia</td><td>32-krokowy spływ doliny + progresywny renderer wolumetryczny GPU (64 próbki) + kafelkowy eksport GPU 16-bit</td></tr>
+          <tr><td><b>Web Desktop</b> (Przeglądarka)</td><td>WebGPU / WASM ONNX + fuzja 2×2 + filtr RGB Guided + 16-bitowa głębia</td><td>12-krokowy spływ doliny + progresywny ray-marching WebGL2 z cieniami 3D</td></tr>
+          <tr><td><b>Web Mobilny</b> (Telefon/Tablet)</td><td>Szybka głębia ONNX z zachowaniem proporcji + filtr RGB Guided (bezpieczna dla RAM telefonu)</td><td>Interfejs dotykowy + szybki etapowy render WebGL2</td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Wskazówki dotyczące suwaków i głębi</h2>
+        <ul>
+          <li><b>Bliska głębia i AutoGłębia (<kbd>A</kbd>):</b> Obiekty bliższe niż Bliska głębia pozostają w 100% czyste. Włącz <b>AutoGłębię</b> i kliknij początek mgły.</li>
+          <li><b>Korekta głębi (<kbd>N</kbd> / <kbd>F</kbd>):</b> W widoku mapy głębi (<kbd>D</kbd>) pędzle <b>Bliżej</b> i <b>Dalej</b> pozwalają poprawić odbicia w wodzie lub cienie.</li>
+          <li><b>Spływ doliny i Mgła w cieniu:</b> Opływa pnie drzew i gromadzi gęstszą mgłę w chłodnych zagłębieniach.</li>
+          <li><b>Miękkie cienie:</b> Naturalnie łagodzi ostre cienie słoneczne pod gęstą warstwą mgły.</li>
+          <li><b>Model HD na Desktopie:</b> Uruchom <code>scripts/download_hd_depth.sh</code> (Linux/Mac) lub <code>scripts/download_hd_depth.ps1</code> (Windows), aby pobrać model Apache 2.0 <code>DA3Mono-Large</code> do <code>assets/models/</code>.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>Skróty klawiszowe i gesty dotykowe</h2>
+        <table>
+          <tr><th>Skrót</th><th>Działanie</th></tr>
+          <tr><td><kbd>Enter</kbd> / <kbd>Esc</kbd></td><td>Rozpocznij renderowanie / Anuluj render (lub zamknij samouczek)</td></tr>
+          <tr><td><kbd>B</kbd> / <kbd>E</kbd> / <kbd>P</kbd> / <kbd>S</kbd></td><td>Pędzel mgły / Gumka / Chroń pierwszy plan / Pozycja słońca</td></tr>
+          <tr><td><kbd>D</kbd> / <kbd>N</kbd> / <kbd>F</kbd></td><td>Mapa głębi / Pędzel Bliżej / Pędzel Dalej</td></tr>
+          <tr><td><kbd>M</kbd> / <kbd>Spacja</kbd> / <kbd>A</kbd> / <kbd>R</kbd></td><td>Pokaż/ukryj maskę / Podział Przed-Po / AutoGłębia / Losuj układ smug</td></tr>
+          <tr><td><kbd>[</kbd> <kbd>]</kbd> / <kbd>Ctrl+Z</kbd> / <kbd>0</kbd> / <kbd>F1</kbd></td><td>Rozmiar pędzla / Cofnij / Reset powiększenia / Pomoc online</td></tr>
+          <tr><td><b>Ekran dotykowy</b></td><td>1 palec: malowanie · 2 palce: powiększenie/przesuwanie · 2 palce stuknięcie: Cofnij · 3 palce: Ponów</td></tr>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    function setLang(code) {
+      if (code !== "de" && code !== "pl" && code !== "en") code = "en";
+      document.documentElement.lang = code;
+      document.querySelectorAll(".lang-section").forEach((el) => el.classList.remove("active"));
+      document.getElementById("sec-" + code).classList.add("active");
+      document.querySelectorAll(".lang-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.lang === code);
+      });
+      const appLink = document.getElementById("app-link");
+      if (appLink) appLink.href = "./index.html?lang=" + code;
+      try {
+        const u = new URL(window.location.href);
+        u.searchParams.set("lang", code);
+        window.history.replaceState({}, "", u.toString());
+      } catch (_) {}
+    }
+    (function init() {
+      const p = new URLSearchParams(window.location.search).get("lang");
+      if (p) { setLang(p.toLowerCase()); return; }
+      const nav = (navigator.language || "en").toLowerCase();
+      if (nav.startsWith("de")) setLang("de");
+      else if (nav.startsWith("pl")) setLang("pl");
+      else setLang("en");
+    })();
+  </script>
+</body>
+</html>

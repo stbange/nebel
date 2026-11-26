@@ -131,15 +131,16 @@ if(NEBEL_BUILD_APP)
             "-sALLOW_MEMORY_GROWTH=1"
             "-sINITIAL_MEMORY=67108864"
             "-sFORCE_FILESYSTEM=1"
-            "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_nebel_web_on_file_loaded','_nebel_web_on_depth_ready','_nebel_web_on_depth_failed']"
-            "-sEXPORTED_RUNTIME_METHODS=['FS','HEAPU8','HEAPF32','UTF8ToString']"
+            "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_nebel_web_on_file_loaded','_nebel_web_set_env','_nebel_web_on_depth_progress','_nebel_web_on_depth_ready','_nebel_web_on_depth_fused','_nebel_web_on_depth_failed']"
+            "-sEXPORTED_RUNTIME_METHODS=['FS','HEAPU8','HEAPF32','UTF8ToString','stringToUTF8','lengthBytesUTF8']"
         )
         add_custom_command(TARGET nebel POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/web/index.html" "${NEBEL_WEB_DIST}/index.html"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/web/help.html" "${NEBEL_WEB_DIST}/help.html"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/web/nebel_web.js" "${NEBEL_WEB_DIST}/nebel_web.js"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/assets" "${NEBEL_WEB_DIST}/assets"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/scripts" "${NEBEL_WEB_DIST}/scripts"
-            COMMENT "Packaging loose external assets and Lua scripts beside nebel.wasm"
+            COMMENT "Packaging loose external assets, help, and Lua scripts beside nebel.wasm"
         )
     else()
         if(APPLE)
@@ -156,7 +157,9 @@ if(NEBEL_BUILD_APP)
         add_custom_command(TARGET nebel POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:nebel>/assets"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/scripts" "$<TARGET_FILE_DIR:nebel>/scripts"
-            COMMENT "Copying loose external assets/ and scripts/ beside binary"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:nebel>/assets/help"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/web/help.html" "$<TARGET_FILE_DIR:nebel>/assets/help/index.html"
+            COMMENT "Copying loose external assets/, help, and scripts/ beside binary"
         )
     endif()
 endif()

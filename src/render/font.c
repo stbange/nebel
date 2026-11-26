@@ -7,6 +7,31 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
+uint32_t nebel_utf8_next(const char **p) {
+    if (!p || !*p || !**p) return 0u;
+    const unsigned char *s = (const unsigned char *)(*p);
+    uint32_t cp = 0u;
+    if ((s[0] & 0x80u) == 0u) {
+        cp = s[0];
+        *p += 1;
+    } else if ((s[0] & 0xE0u) == 0xC0u && (s[1] & 0xC0u) == 0x80u) {
+        cp = ((uint32_t)(s[0] & 0x1Fu) << 6) | (uint32_t)(s[1] & 0x3Fu);
+        *p += 2;
+    } else if ((s[0] & 0xF0u) == 0xE0u && (s[1] & 0xC0u) == 0x80u && (s[2] & 0xC0u) == 0x80u) {
+        cp = ((uint32_t)(s[0] & 0x0Fu) << 12) | ((uint32_t)(s[1] & 0x3Fu) << 6) | (uint32_t)(s[2] & 0x3Fu);
+        *p += 3;
+    } else if ((s[0] & 0xF8u) == 0xF0u && (s[1] & 0xC0u) == 0x80u &&
+               (s[2] & 0xC0u) == 0x80u && (s[3] & 0xC0u) == 0x80u) {
+        cp = ((uint32_t)(s[0] & 0x07u) << 18) | ((uint32_t)(s[1] & 0x3Fu) << 12) |
+             ((uint32_t)(s[2] & 0x3Fu) << 6)  | (uint32_t)(s[3] & 0x3Fu);
+        *p += 4;
+    } else {
+        cp = '?';
+        *p += 1;
+    }
+    return cp;
+}
+
 bool nebel_font_load(NebelFont *font, const char *ttf_path, float pixel_height) {
     if (!font || !ttf_path) return false;
     memset(font, 0, sizeof(*font));
@@ -29,17 +54,21 @@ bool nebel_font_load(NebelFont *font, const char *ttf_path, float pixel_height) 
 
     const int aw = 512, ah = 512;
     unsigned char *bitmap = (unsigned char *)calloc((size_t)aw * (size_t)ah, 1u);
-    stbtt_bakedchar baked[96];
-    if (!bitmap) { free(ttf); return false; }
-
-    int res = stbtt_BakeFontBitmap(ttf, 0, pixel_height, bitmap, aw, ah, 32, 96, baked);
-    free(ttf);
-    if (res <= 0) {
-        free(bitmap);
+    stbtt_bakedchar *baked = (stbtt_bakedchar *)calloc(NEBEL_FONT_GLYPH_COUNT, sizeof(stbtt_bakedchar));
+    if (!bitmap || !baked) {
+        free(ttf); free(bitmap); free(baked);
         return false;
     }
 
-    for (int i = 0; i < 96; i++) {
+    int res = stbtt_BakeFontBitmap(ttf, 0, pixel_height, bitmap, aw, ah,
+                                   (int)NEBEL_FONT_FIRST_CP, (int)NEBEL_FONT_GLYPH_COUNT, baked);
+    free(ttf);
+    if (res <= 0) {
+        free(bitmap); free(baked);
+        return false;
+    }
+
+    for (uint32_t i = 0; i < NEBEL_FONT_GLYPH_COUNT; i++) {
         NebelGlyph *g = &font->glyphs[i];
         g->u0 = (float)baked[i].x0 / (float)aw;
         g->v0 = (float)baked[i].y0 / (float)ah;
@@ -51,6 +80,7 @@ bool nebel_font_load(NebelFont *font, const char *ttf_path, float pixel_height) 
         g->y1 = g->y0 + (float)(baked[i].y1 - baked[i].y0);
         g->xadvance = baked[i].xadvance;
     }
+    free(baked);
 
     glGenTextures(1, &font->tex);
     glBindTexture(GL_TEXTURE_2D, font->tex);

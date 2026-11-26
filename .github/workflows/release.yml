@@ -1,0 +1,176 @@
+name: Desktop Release (Win / macOS / Linux)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag name (e.g. v3.0.0)'
+        required: true
+        default: 'v3.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-x64
+            ext: tar.gz
+          - os: macos-latest
+            label: macos-arm64
+            ext: zip
+          - os: windows-latest
+            label: windows-x64
+            ext: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine release tag
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Install Linux SDL3/GL dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build libgl1-mesa-dev libx11-dev libxext-dev \
+            libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev \
+            libwayland-dev libxkbcommon-dev libasound2-dev libpulse-dev pkg-config
+
+      - name: Configure & Build Release
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DNEBEL_BUILD_TESTS=OFF
+          cmake --build build --config Release --parallel
+
+      - name: Bundle ONNX Runtime + Apache-2.0 DA2-Small + Loose Assets
+        shell: bash
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          STAGE="nebel-${TAG}-${{ matrix.label }}"
+          mkdir -p "$STAGE/assets/models"
+
+          if [ -d build/Release ]; then OUT=build/Release; else OUT=build; fi
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "$OUT/nebel.exe" "$STAGE/"
+          else
+            cp "$OUT/nebel" "$STAGE/"
+            chmod +x "$STAGE/nebel"
+          fi
+          cp -r "$OUT/assets" "$STAGE/"
+          cp -r "$OUT/scripts" "$STAGE/"
+          chmod +x "$STAGE/scripts/download_hd_depth.sh" || true
+          cp LICENSE LICENSE-ART README.md "$STAGE/"
+
+          # Download Apache-2.0 Depth Anything V2 Small ONNX (25 MB) for instant offline AI depth
+          curl -fsSL "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model_quantized.onnx" \
+            -o "$STAGE/assets/models/model_quantized.onnx"
+
+          # Bundle official ONNX Runtime v1.24.4 shared library (CoreML on macOS, DirectML on Windows, Linux .so)
+          ORT_VER="1.24.4"
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            if curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VER}/onnxruntime-linux-x64-${ORT_VER}.tgz" -o ort.tgz; then
+              tar -xzf ort.tgz
+              cp -P onnxruntime-linux-x64-${ORT_VER}/lib/libonnxruntime.so* "$STAGE/"
+              rm -rf ort.tgz onnxruntime-linux-x64-${ORT_VER}
+            else
+              curl -fsSL "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/${ORT_VER}/microsoft.ml.onnxruntime.${ORT_VER}.nupkg" -o ort.zip
+              unzip -qo ort.zip "runtimes/linux-x64/native/*" -d ort_pkg
+              cp -P ort_pkg/runtimes/linux-x64/native/libonnxruntime* "$STAGE/"
+              rm -rf ort.zip ort_pkg
+            fi
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            if curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VER}/onnxruntime-osx-arm64-${ORT_VER}.tgz" -o ort.tgz; then
+              tar -xzf ort.tgz
+              cp -P onnxruntime-osx-arm64-${ORT_VER}/lib/libonnxruntime*.dylib "$STAGE/"
+              rm -rf ort.tgz onnxruntime-osx-arm64-${ORT_VER}
+            else
+              curl -fsSL "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/${ORT_VER}/microsoft.ml.onnxruntime.${ORT_VER}.nupkg" -o ort.zip
+              unzip -qo ort.zip "runtimes/osx-arm64/native/*" -d ort_pkg
+              cp -P ort_pkg/runtimes/osx-arm64/native/libonnxruntime*.dylib "$STAGE/"
+              rm -rf ort.zip ort_pkg
+            fi
+          else
+            curl -fsSL "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/${ORT_VER}/microsoft.ml.onnxruntime.directml.${ORT_VER}.nupkg" -o ort_dml.zip
+            unzip -qo ort_dml.zip "runtimes/win-x64/native/*.dll" -d ort_dml
+            cp ort_dml/runtimes/win-x64/native/*.dll "$STAGE/"
+            rm -rf ort_dml.zip ort_dml
+
+            curl -fsSL "https://api.nuget.org/v3-flatcontainer/microsoft.ai.directml/1.15.4/microsoft.ai.directml.1.15.4.nupkg" -o ai_dml.zip
+            unzip -qo ai_dml.zip "bin/x64-win/DirectML.dll" -d ai_dml
+            cp ai_dml/bin/x64-win/DirectML.dll "$STAGE/"
+            rm -rf ai_dml.zip ai_dml
+          fi
+
+          mkdir -p dist-release
+          if [ "${{ matrix.ext }}" = "tar.gz" ]; then
+            tar -czf "dist-release/${STAGE}.tar.gz" "$STAGE"
+          elif [ "${{ runner.os }}" = "Windows" ]; then
+            powershell -Command "Compress-Archive -Path '${STAGE}' -DestinationPath 'dist-release/${STAGE}.zip'"
+          else
+            zip -rq "dist-release/${STAGE}.zip" "$STAGE"
+          fi
+
+      - name: Upload packaged archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.label }}
+          path: dist-release/*
+
+  publish:
+    name: Publish GitHub Release
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS and Publish Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          cd artifacts
+          sha256sum nebel-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+          NOTES=$(cat << 'EOF'
+          ## Nebel Atmospheric Fog Studio
+
+          Portable desktop bundles with loose external `assets/`, `scripts/` (EN/DE/PL locales), offline `assets/help/index.html`, ONNX Runtime (DirectML on Windows, CoreML on macOS, Linux shared lib), and the bundled Apache-2.0 `Depth Anything V2 Small` model.
+
+          - **Live Web App (Desktop & Mobile):** https://stbange.github.io/nebel/
+          - **Online Help (English / Deutsch / Polski):** https://stbange.github.io/nebel/help.html
+          - **Optional HD Depth Upgrade (`DA3Mono-Large`, Apache 2.0):** Run `scripts/download_hd_depth.sh` (Linux/macOS) or `scripts/download_hd_depth.ps1` (Windows) inside the unpacked folder.
+          EOF
+          )
+
+          if gh release view "$TAG" -R "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" nebel-* SHA256SUMS.txt --clobber -R "${{ github.repository }}"
+          else
+            gh release create "$TAG" nebel-* SHA256SUMS.txt \
+              --title "Nebel $TAG — Tiered GPU Studio, HD Depth & EN/DE/PL" \
+              --notes "$NOTES" \
+              -R "${{ github.repository }}"
+          fi

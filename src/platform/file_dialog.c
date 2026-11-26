@@ -29,8 +29,9 @@ void nebel_file_dialog_init(NebelAppState *app) {
     g_web_app = app;
 }
 
-void nebel_file_dialog_poll(NebelAppState *app, SDL_Window *window) {
+void nebel_file_dialog_poll(NebelAppState *app, SDL_Window *window, NebelRenderer *renderer) {
     (void)window;
+    (void)renderer;
     if (!app) return;
     if (app->req_open_dialog) {
         app->req_open_dialog = false;
@@ -141,7 +142,7 @@ void nebel_file_dialog_init(NebelAppState *app) {
     if (!g_dlg_mutex) g_dlg_mutex = SDL_CreateMutex();
 }
 
-void nebel_file_dialog_poll(NebelAppState *app, SDL_Window *window) {
+void nebel_file_dialog_poll(NebelAppState *app, SDL_Window *window, NebelRenderer *renderer) {
     if (!app || !g_dlg_mutex) return;
 
     if (app->req_open_dialog) {
@@ -177,33 +178,46 @@ void nebel_file_dialog_poll(NebelAppState *app, SDL_Window *window) {
         nebel_app_load_image_file(app, path);
     }
     if (take_pending(g_pending_save_png, path)) {
-        if (nebel_app_export_png(app, path)) {
+        NebelImage out = {0};
+        bool ok = nebel_renderer_render_full(renderer, app, &out) && nebel_image_save_png(&out, path);
+        nebel_image_free(&out);
+        if (ok) {
             nebel_app_queue_audio(app, "assets/sounds/export_shutter.wav", 0.55f);
-            nebel_app_set_status(app, "Exported full-resolution PNG");
+            nebel_app_set_status(app, "Exported full-resolution PNG (GPU)");
         } else {
             nebel_app_set_status(app, "PNG export failed");
         }
     }
     if (take_pending(g_pending_save_jpg, path)) {
-        if (nebel_app_export_jpg(app, path, app->req_jpg_quality)) {
+        NebelImage out = {0};
+        bool ok = nebel_renderer_render_full(renderer, app, &out) &&
+                  nebel_image_save_jpg(&out, path, app->req_jpg_quality);
+        nebel_image_free(&out);
+        if (ok) {
             nebel_app_queue_audio(app, "assets/sounds/export_shutter.wav", 0.55f);
-            nebel_app_set_status(app, "Exported full-resolution JPEG");
+            nebel_app_set_status(app, "Exported full-resolution JPEG (GPU)");
         } else {
             nebel_app_set_status(app, "JPEG export failed");
         }
     }
     if (take_pending(g_pending_save_png16, path)) {
-        if (nebel_app_export_png16(app, path)) {
+        NebelImage out = {0};
+        bool ok = nebel_renderer_render_full(renderer, app, &out) && nebel_image_save_png16(&out, path);
+        nebel_image_free(&out);
+        if (ok) {
             nebel_app_queue_audio(app, "assets/sounds/export_shutter.wav", 0.55f);
-            nebel_app_set_status(app, "Exported 16-bit lossless PNG");
+            nebel_app_set_status(app, "Exported 16-bit lossless PNG (GPU)");
         } else {
             nebel_app_set_status(app, "16-bit PNG export failed");
         }
     }
     if (take_pending(g_pending_save_tiff16, path)) {
-        if (nebel_app_export_tiff16(app, path)) {
+        NebelImage out = {0};
+        bool ok = nebel_renderer_render_full(renderer, app, &out) && nebel_image_save_tiff16(&out, path);
+        nebel_image_free(&out);
+        if (ok) {
             nebel_app_queue_audio(app, "assets/sounds/export_shutter.wav", 0.55f);
-            nebel_app_set_status(app, "Exported 16-bit print TIFF");
+            nebel_app_set_status(app, "Exported 16-bit print TIFF (GPU)");
         } else {
             nebel_app_set_status(app, "16-bit TIFF export failed");
         }
