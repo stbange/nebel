@@ -105,8 +105,8 @@ void main() {
         float tint_a = clamp(m_eff * (0.12 + 0.34 * d_in), 0.0, 0.48);
         vec3 marker_col = mix(vec3(0.45, 0.62, 0.78), vec3(0.32, 0.78, 0.98), d_in);
         out_srgb = mix(out_srgb, marker_col, tint_a);
-        if (pr > 0.02) {
-            out_srgb = mix(out_srgb, vec3(0.22, 0.88, 0.52), clamp(pr * 0.40, 0.0, 0.42));
+        if (pr > 0.001) {
+            out_srgb = mix(out_srgb, vec3(0.22, 0.88, 0.52), clamp(pr * 0.42, 0.0, 0.42));
         }
     }
 

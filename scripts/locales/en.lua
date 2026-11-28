@@ -110,7 +110,7 @@ return {
     tip_tool_dfar = "Depth Farther (F): push painted area farther into background",
     tip_brush_size = "Marker brush radius ([ and ] keys)",
     tip_opacity = "Marker stroke strength / flow",
-    tip_softness = "Adjustable brush feather for painting & erasing (0 = hard, 1 = very soft; Shift+[ / ])",
+    tip_softness = "Adjustable soft edge for Fog, Eraser & Protect (0 = hard, 1 = very soft; Shift+[ / ])",
     tip_add_layer = "Add another independent fog depth layer (up to 8)",
     tip_seed = "Randomize volumetric mist clouds & clearings (R)",
     tip_skytint = "Sample ambient sky color from photo for realistic airlight tint",

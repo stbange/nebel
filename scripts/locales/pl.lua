@@ -110,7 +110,7 @@ return {
     tip_tool_dfar = "Głębia dalej (F): odsuń obszar dalej w tło",
     tip_brush_size = "Rozmiar pędzla zaznaczania (klawisze [ i ])",
     tip_opacity = "Siła i krycie zaznaczenia",
-    tip_softness = "Miękka krawędź malowania i gumki mgły (0 = twarda, 1 = bardzo miękka; Shift+[ / ])",
+    tip_softness = "Miękka krawędź dla Mgły, Gumki i Ochrony (0 = twarda, 1 = bardzo miękka; Shift+[ / ])",
     tip_add_layer = "Dodaj kolejną niezależną warstwę mgły (do 8)",
     tip_seed = "Wylosuj nowy naturalny układ smug i prześwitów (R)",
     tip_skytint = "Pobierz kolor nieba ze zdjęcia jako barwę mgły",

@@ -319,6 +319,32 @@ static void test_brush_and_fog_module(void) {
     CHECK(m_soft[24 * 64 + 37] < m_soft[24 * 64 + 41]);
     CHECK(m_soft[24 * 64 + 41] > 215);
 
+    /* Non-compounding stroke envelope: 40 overlapping slow-drag moves keep soft rim intact on paint & erase */
+    uint8_t env_buf[64 * 48], bak_buf[64 * 48];
+    bp.radius = 0.25f; bp.opacity = 0.85f; bp.softness = 1.0f;
+    memset(m_soft, 0, sizeof(m_soft));
+    memset(bak_buf, 0, sizeof(bak_buf));
+    memset(env_buf, 0, sizeof(env_buf));
+    for (int step = 0; step < 40; step++) {
+        float u0 = 0.48f + (float)(step % 2) * 0.02f;
+        float u1 = 0.50f - (float)(step % 2) * 0.02f;
+        nebel_brush_stroke_envelope(m_soft, bak_buf, env_buf, 64, 48, u0, 0.5f, u1, 0.5f, &bp, false);
+    }
+    CHECK(m_soft[24 * 64 + 32] > 200);
+    CHECK(m_soft[24 * 64 + 41] < 60); /* Outer feather rim NEVER hardened by slow dragging! */
+    /* Same non-compounding soft rim on Eraser */
+    memset(m_soft, 255, sizeof(m_soft));
+    memset(bak_buf, 255, sizeof(bak_buf));
+    memset(env_buf, 0, sizeof(env_buf));
+    for (int step = 0; step < 40; step++) {
+        float u0 = 0.48f + (float)(step % 2) * 0.02f;
+        float u1 = 0.50f - (float)(step % 2) * 0.02f;
+        nebel_brush_stroke_envelope(m_soft, bak_buf, env_buf, 64, 48, u0, 0.5f, u1, 0.5f, &bp, true);
+    }
+    CHECK(m_soft[24 * 64 + 32] < 55);
+    CHECK(m_soft[24 * 64 + 41] > 195);
+    nebel_brush_stroke_envelope(NULL, bak_buf, env_buf, 64, 48, 0.5f, 0.5f, 0.5f, 0.5f, &bp, false);
+
     /* Fog params clamp & math */
     NebelFogParams fp;
     nebel_fog_params_default(&fp);

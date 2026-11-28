@@ -61,7 +61,8 @@ typedef struct {
     bool auto_depth_brush;
     bool stroke_in_progress;
     float last_stroke_x, last_stroke_y;
-    uint8_t *stroke_backup; /* Restored if multi-touch cancels a tentative stroke */
+    uint8_t *stroke_backup;   /* Restored if multi-touch cancels a tentative stroke */
+    uint8_t *stroke_envelope; /* Per-stroke MAX falloff envelope so soft edges never harden */
 
     float zoom;
     float pan_x, pan_y;

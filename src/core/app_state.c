@@ -22,6 +22,8 @@ static void free_image_buffers(NebelAppState *app) {
     app->protect_mask = NULL;
     free(app->stroke_backup);
     app->stroke_backup = NULL;
+    free(app->stroke_envelope);
+    app->stroke_envelope = NULL;
     for (int i = 0; i < app->layer_count; i++) {
         nebel_fog_layer_free(&app->layers[i]);
     }
@@ -202,8 +204,9 @@ bool nebel_app_load_image(NebelAppState *app, const NebelImage *img) {
     float *depth = (float *)calloc(wn, sizeof(float));
     uint8_t *prot = (uint8_t *)calloc(wn, 1u);
     uint8_t *bak  = (uint8_t *)calloc(wn, 1u);
-    if (!depth || !prot || !bak) {
-        free(depth); free(prot); free(bak);
+    uint8_t *env  = (uint8_t *)calloc(wn, 1u);
+    if (!depth || !prot || !bak || !env) {
+        free(depth); free(prot); free(bak); free(env);
         nebel_image_free(&orig_copy);
         nebel_image_free(&work_copy);
         return false;
@@ -215,6 +218,7 @@ bool nebel_app_load_image(NebelAppState *app, const NebelImage *img) {
     app->depth_map = depth;
     app->protect_mask = prot;
     app->stroke_backup = bak;
+    app->stroke_envelope = env;
     app->depth_is_neural = false;
     app->depth_is_hd = false;
     app->depth_job_running = false;
@@ -495,13 +499,20 @@ void nebel_app_stroke_begin(NebelAppState *app, float u, float v) {
     if (!mask) return;
     size_t sz = (size_t)app->work_img.width * (size_t)app->work_img.height;
     if (app->stroke_backup) memcpy(app->stroke_backup, mask, sz);
+    if (app->stroke_envelope) memset(app->stroke_envelope, 0, sz);
 
     app->stroke_in_progress = true;
     app->last_stroke_x = u;
     app->last_stroke_y = v;
     bool erase = (app->active_tool == NEBEL_TOOL_ERASER);
-    nebel_brush_stroke(mask, app->work_img.width, app->work_img.height,
-                       u, v, u, v, &app->brush, erase);
+    if (app->stroke_backup && app->stroke_envelope) {
+        nebel_brush_stroke_envelope(mask, app->stroke_backup, app->stroke_envelope,
+                                    app->work_img.width, app->work_img.height,
+                                    u, v, u, v, &app->brush, erase);
+    } else {
+        nebel_brush_stroke(mask, app->work_img.width, app->work_img.height,
+                           u, v, u, v, &app->brush, erase);
+    }
     app->dirty_masks_gpu = true;
     nebel_app_mark_dirty(app);
     nebel_app_queue_audio(app, "assets/sounds/brush_soft.wav", 0.35f);
@@ -532,8 +543,14 @@ void nebel_app_stroke_move(NebelAppState *app, float u, float v) {
     uint8_t *mask = active_stroke_mask(app);
     if (!mask) return;
     bool erase = (app->active_tool == NEBEL_TOOL_ERASER);
-    nebel_brush_stroke(mask, app->work_img.width, app->work_img.height,
-                       app->last_stroke_x, app->last_stroke_y, u, v, &app->brush, erase);
+    if (app->stroke_backup && app->stroke_envelope) {
+        nebel_brush_stroke_envelope(mask, app->stroke_backup, app->stroke_envelope,
+                                    app->work_img.width, app->work_img.height,
+                                    app->last_stroke_x, app->last_stroke_y, u, v, &app->brush, erase);
+    } else {
+        nebel_brush_stroke(mask, app->work_img.width, app->work_img.height,
+                           app->last_stroke_x, app->last_stroke_y, u, v, &app->brush, erase);
+    }
     app->last_stroke_x = u;
     app->last_stroke_y = v;
     app->dirty_masks_gpu = true;

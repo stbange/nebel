@@ -31,4 +31,11 @@ void nebel_brush_stroke(uint8_t *mask, int w, int h,
                         float x0, float y0, float x1, float y1,
                         const NebelBrushParams *p, bool erase);
 
+/* Non-compounding stroke-envelope brush for Fog, Eraser, and Protect:
+ * accumulates MAX soft-edge falloff into `envelope` across slow/fast mouse moves
+ * and composites once against pre-stroke `backup` so soft borders never harden. */
+void nebel_brush_stroke_envelope(uint8_t *mask, const uint8_t *backup, uint8_t *envelope,
+                                 int w, int h, float x0, float y0, float x1, float y1,
+                                 const NebelBrushParams *p, bool erase);
+
 #endif /* NEBEL_CORE_BRUSH_H */
