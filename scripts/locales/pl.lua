@@ -38,6 +38,7 @@ return {
     sl_brush_size = "Rozmiar pędzla",
     sl_opacity = "Krycie",
     sl_softness = "Miękka krawędź",
+    chk_paint_zone = "Pokaż strefę malowania",
 
     sec_layers = "WARSTWY MGŁY",
     btn_add_layer = "+ Dodaj",
@@ -113,6 +114,7 @@ return {
     tip_brush_size = "Rozmiar pędzla zaznaczania (klawisze [ i ])",
     tip_opacity = "Siła i krycie zaznaczania",
     tip_softness = "Miękka krawędź dla Mgły, Gumki i Ochrony (0 = twarda, 1 = bardzo miękka; Shift+[ / ])",
+    tip_paint_zone = "Zaznacza subtelnymi kropkami obszary gotowe do malowania mgły (między Bliską/Daleką głębią, poza Ochroną)",
     tip_add_layer = "Dodaj kolejną niezależną warstwę mgły (do 8)",
     tip_seed = "Wylosuj nowy naturalny układ smug i prześwitów (R)",
     tip_skytint = "Pobierz kolor nieba ze zdjęcia jako barwę mgły",

@@ -38,6 +38,7 @@ return {
     sl_brush_size = "Pinselgröße",
     sl_opacity = "Deckkraft",
     sl_softness = "Weiche Kante",
+    chk_paint_zone = "Malbereich anzeigen",
 
     sec_layers = "NEBEL-EBENEN",
     btn_add_layer = "+ Neu",
@@ -113,6 +114,7 @@ return {
     tip_brush_size = "Pinselgröße einstellen (Tasten [ und ])",
     tip_opacity = "Deckkraft des Markers",
     tip_softness = "Weiche Kante für Nebel, Radierer & Schutz (0 = hart, 1 = sehr weich; Umschalt+[ / ])",
+    tip_paint_zone = "Markiert aktuell bemalbare Bereiche (zwischen Start-/End-Tiefe, außerhalb Schutz) mit dezenten Punkten",
     tip_add_layer = "Weitere unabhängige Nebel-Ebene hinzufügen (bis zu 8)",
     tip_seed = "Zufällige neue Nebelschwaden und Lücken erzeugen (R)",
     tip_skytint = "Himmelsfarbe aus dem Foto als natürliche Nebelfarbe übernehmen",

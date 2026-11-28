@@ -721,6 +721,7 @@ void nebel_renderer_draw(NebelRenderer *r, NebelAppState *app,
         GLuint display_fog_tex = r->has_valid_render ? r->tex_accum[r->accum_active] : r->tex_photo;
         int active_li = (app->active_layer >= 0 && app->active_layer < app->layer_count) ? app->active_layer : 0;
         float mask_dmin = app->layer_count > 0 ? app->layers[active_li].params.depth_min : 0.35f;
+        float mask_dmax = app->layer_count > 0 ? app->layers[active_li].params.depth_max : 1.00f;
 
         /* Final composite to default framebuffer */
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -751,7 +752,9 @@ void nebel_renderer_draw(NebelRenderer *r, NebelAppState *app,
         glUniform1f(glGetUniformLocation(r->prog_comp, "u_split_pos"), app->split_pos);
         glUniform1f(glGetUniformLocation(r->prog_comp, "u_show_depth"), app->show_depth ? 1.0f : 0.0f);
         glUniform1f(glGetUniformLocation(r->prog_comp, "u_show_mask"), app->show_mask_overlay ? 1.0f : 0.0f);
+        glUniform1f(glGetUniformLocation(r->prog_comp, "u_show_zone"), app->show_paintable_zone ? 1.0f : 0.0f);
         glUniform1f(glGetUniformLocation(r->prog_comp, "u_mask_depth_min"), mask_dmin);
+        glUniform1f(glGetUniformLocation(r->prog_comp, "u_mask_depth_max"), mask_dmax);
         glUniform2f(glGetUniformLocation(r->prog_comp, "u_sun_pos"), rays_sun_x, rays_sun_y);
         glUniform1f(glGetUniformLocation(r->prog_comp, "u_god_rays"), r->has_valid_render ? max_god_rays : 0.0f);
         draw_quad(r->prog_comp, cx, cy, cw, ch, (float)vw, (float)vh, 0, 0, 1, 1);

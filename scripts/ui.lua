@@ -87,26 +87,12 @@ local function draw_top_bar(vw, touch)
 
     local rguard = touch and 172 or 488
 
-    -- Sample photos
+    -- Sample photos (load clean without applying presets or pre-painted fog)
     for i, s in ipairs(pipeline.default_samples) do
         local w = touch and 58 or 64
         if x + w < vw - rguard then
             if nebel.ui.button(20 + i, x, by, w, bh, i18n.t(s.label_key), false, -1) then
                 if nebel.io.load_sample(s.path) then
-                    if i == 2 then
-                        presets.apply("Backlit Wildlife")
-                        nebel.brush.set_tool("fog")
-                        nebel.brush.set_radius(0.42)
-                        nebel.brush.set_opacity(0.80)
-                        nebel.brush.set_softness(0.95)
-                        nebel.brush.stroke_begin(0.15, 0.44)
-                        nebel.brush.stroke_move(0.85, 0.44)
-                        nebel.brush.stroke_end()
-                        nebel.brush.set_radius(0.10)
-                        nebel.brush.set_softness(0.75)
-                    else
-                        presets.apply("Morning Valley")
-                    end
                     nebel.view.set_status(i18n.t("status_ready"))
                 end
             end
@@ -313,19 +299,25 @@ local function draw_desktop_sidebar(vw, vh)
         y = y + 26
     end
 
-    -- Brush size, opacity & adjustable soft edge (feather)
-    local rad, c1 = nebel.ui.slider(120, sx + pad, y, iw, 25, i18n.t("sl_brush_size"), nebel.brush.get_radius(), 0.01, 0.40)
+    -- Brush size, opacity, soft edge & Paintable Zone dotted overlay checkbox
+    local rad, c1 = nebel.ui.slider(120, sx + pad, y, iw, 24, i18n.t("sl_brush_size"), nebel.brush.get_radius(), 0.01, 0.40)
     tip("tip_brush_size")
     if c1 then nebel.brush.set_radius(rad) end
-    y = y + 26
-    local op, c2 = nebel.ui.slider(121, sx + pad, y, iw, 25, i18n.t("sl_opacity"), nebel.brush.get_opacity(), 0.05, 1.0)
+    y = y + 25
+    local op, c2 = nebel.ui.slider(121, sx + pad, y, iw, 24, i18n.t("sl_opacity"), nebel.brush.get_opacity(), 0.05, 1.0)
     tip("tip_opacity")
     if c2 then nebel.brush.set_opacity(op) end
-    y = y + 26
-    local sf, c3 = nebel.ui.slider(122, sx + pad, y, iw, 25, i18n.t("sl_softness"), nebel.brush.get_softness(), 0.0, 1.0)
+    y = y + 25
+    local sf, c3 = nebel.ui.slider(122, sx + pad, y, iw, 24, i18n.t("sl_softness"), nebel.brush.get_softness(), 0.0, 1.0)
     tip("tip_softness")
     if c3 then nebel.brush.set_softness(sf) end
-    y = y + 27
+    y = y + 25
+    local show_z = nebel.view.show_zone()
+    if nebel.ui.checkbox(123, sx + pad, y, iw, 20, i18n.t("chk_paint_zone"), show_z) then
+        nebel.view.set_show_zone(not show_z)
+    end
+    tip("tip_paint_zone")
+    y = y + 23
 
     -- Layers section
     nebel.ui.label(sx + pad, y, i18n.t("sec_layers"), 0.60, 0.66, 0.74, 1.0)
@@ -383,12 +375,12 @@ local function draw_desktop_sidebar(vw, vh)
             nebel.layers.set(active, "struct_texture", use_tex and 0 or 1)
         end
         tip("tip_struct_tex")
-        y = y + 23
+        y = y + 22
 
         for i, sl in ipairs(pipeline.sliders) do
-            if y + 25 > vh - 90 then break end
+            if y + 24 > vh - 88 then break end
             local val = nebel.layers.get(active, sl.key) or sl.min
-            local nv, ch = nebel.ui.slider(200 + i, sx + pad, y, iw, 25, i18n.t(sl.label_key), val, sl.min, sl.max)
+            local nv, ch = nebel.ui.slider(200 + i, sx + pad, y, iw, 24, i18n.t(sl.label_key), val, sl.min, sl.max)
             tip(sl.tip_key)
             if ch then
                 nebel.layers.set(active, sl.key, nv)
@@ -396,14 +388,14 @@ local function draw_desktop_sidebar(vw, vh)
                     nebel.brush.set_auto_depth(false)
                 end
             end
-            y = y + 26
+            y = y + 25
         end
 
-        if y + 25 <= vh - 86 then
+        if y + 24 <= vh - 86 then
             local ar = nebel.layers.get(active, "airlight_r") or 0.78
             local ab = nebel.layers.get(active, "airlight_b") or 0.88
             local warmth = math.max(0.0, math.min(1.0, (ar - ab + 0.35) / 0.70))
-            local nw, cw = nebel.ui.slider(240, sx + pad, y, iw, 25, i18n.t("sl_warmth"), warmth, 0.0, 1.0)
+            local nw, cw = nebel.ui.slider(240, sx + pad, y, iw, 24, i18n.t("sl_warmth"), warmth, 0.0, 1.0)
             tip("tip_warmth")
             if cw then
                 nebel.layers.set(active, "airlight_r", 0.68 + 0.30 * nw)
@@ -465,14 +457,18 @@ local function draw_mobile_drawer(vw, vh)
         local bw = (vw - 34) / 4
         local cur = nebel.brush.get_tool()
         for i, t in ipairs(tools.tools) do
-            if nebel.ui.button(420 + i, 8 + (i - 1) * (bw + 6), cy, bw, 38, i18n.t(t.label_key), cur == t.id, -1) then
+            if nebel.ui.button(420 + i, 8 + (i - 1) * (bw + 6), cy, bw, 34, i18n.t(t.label_key), cur == t.id, -1) then
                 nebel.brush.set_tool(t.id)
             end
         end
+        local show_z = nebel.view.show_zone()
+        if nebel.ui.checkbox(428, 10, cy + 38, vw - 20, 24, i18n.t("chk_paint_zone"), show_z) then
+            nebel.view.set_show_zone(not show_z)
+        end
         local half = (vw - 30) / 2
-        local r, cr = nebel.ui.slider(430, 10, cy + 48, half, 36, i18n.t("sl_brush_size"), nebel.brush.get_radius(), 0.01, 0.40)
+        local r, cr = nebel.ui.slider(430, 10, cy + 66, half, 36, i18n.t("sl_brush_size"), nebel.brush.get_radius(), 0.01, 0.40)
         if cr then nebel.brush.set_radius(r) end
-        local sf, cs = nebel.ui.slider(431, 20 + half, cy + 48, half, 36, i18n.t("sl_softness"), nebel.brush.get_softness(), 0.0, 1.0)
+        local sf, cs = nebel.ui.slider(431, 20 + half, cy + 66, half, 36, i18n.t("sl_softness"), nebel.brush.get_softness(), 0.0, 1.0)
         if cs then nebel.brush.set_softness(sf) end
     elseif M.mobile_tab == "fog" and nebel.layers.count() > 0 then
         local half = (vw - 30) / 2

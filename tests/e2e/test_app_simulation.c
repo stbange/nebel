@@ -64,6 +64,14 @@ int main(void) {
     ASSERT_TRUE(nebel_lua_reload(&lua));
     ASSERT_TRUE(app.orig_img.width > 100 && app.orig_img.height > 100);
     ASSERT_TRUE(app.layer_count == 1);
+    ASSERT_TRUE(app.render_phase == NEBEL_PHASE_MARK);
+    ASSERT_TRUE(!app.show_paintable_zone);
+    {
+        size_t mcount = (size_t)app.layers[0].mask_w * (size_t)app.layers[0].mask_h;
+        size_t nonzero = 0;
+        for (size_t i = 0; i < mcount; i++) if (app.layers[0].mask[i]) nonzero++;
+        ASSERT_TRUE(nonzero == 0);
+    }
 
     /* 3. Load deterministic wildlife-silhouette synthetic photo to test exact optical physics */
     const int W = 96, H = 64;

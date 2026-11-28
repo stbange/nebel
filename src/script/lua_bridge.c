@@ -226,6 +226,11 @@ static int l_view_set_show_mask(lua_State *L) {
     get_app(L)->show_mask_overlay = lua_toboolean(L, 1) != 0;
     return 0;
 }
+static int l_view_show_zone(lua_State *L) { lua_pushboolean(L, get_app(L)->show_paintable_zone); return 1; }
+static int l_view_set_show_zone(lua_State *L) {
+    get_app(L)->show_paintable_zone = lua_toboolean(L, 1) != 0;
+    return 0;
+}
 static int l_view_sample_airlight(lua_State *L) {
     nebel_app_sample_airlight(get_app(L), (float)luaL_optnumber(L, 1, -1.0), (float)luaL_optnumber(L, 2, -1.0));
     return 0;
@@ -503,6 +508,7 @@ static void register_api(lua_State *L) {
         {"is_neural_depth", l_view_is_neural_depth}, {"is_hd_depth", l_view_is_hd_depth},
         {"show_depth", l_view_show_depth}, {"set_show_depth", l_view_set_show_depth},
         {"show_mask", l_view_show_mask}, {"set_show_mask", l_view_set_show_mask},
+        {"show_zone", l_view_show_zone}, {"set_show_zone", l_view_set_show_zone},
         {"sample_airlight", l_view_sample_airlight},
         {"status", l_view_status}, {"set_status", l_view_set_status},
         {"canvas_rect", l_view_canvas_rect}, {NULL, NULL}

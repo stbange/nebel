@@ -14,7 +14,9 @@ uniform float u_split_enabled;
 uniform float u_split_pos;
 uniform float u_show_depth;
 uniform float u_show_mask;
+uniform float u_show_zone;
 uniform float u_mask_depth_min;
+uniform float u_mask_depth_max;
 uniform vec2  u_sun_pos;
 uniform float u_god_rays;
 
@@ -31,14 +33,39 @@ float hash12(vec2 p) {
     return fract((p3.x + p3.y) * p3.z);
 }
 
+vec3 apply_paintable_zone_dots(vec3 srgb, float d_here, float pr) {
+    float d_enter = smoothstep(u_mask_depth_min - 0.03, u_mask_depth_min + 0.06, d_here);
+    float d_exit = (u_mask_depth_max < 0.985)
+        ? (1.0 - smoothstep(u_mask_depth_max - 0.08, u_mask_depth_max + 0.04, d_here))
+        : 1.0;
+    float paintable = d_enter * d_exit * (1.0 - pr);
+    if (paintable <= 0.01) return srgb;
+
+    /* Subtle staggered screen-space polka-dot grid with soft dark halo for dark/bright legibility */
+    vec2 p = gl_FragCoord.xy;
+    float row = floor(p.y / 9.0);
+    vec2 q = vec2(mod(p.x + mod(row, 2.0) * 4.5, 9.0), mod(p.y, 9.0)) - vec2(4.5);
+    float dist = length(q);
+    float dot_core = 1.0 - smoothstep(1.05, 1.80, dist);
+    float dot_halo = 1.0 - smoothstep(1.55, 2.50, dist);
+
+    vec3 c = mix(srgb, srgb * 0.45, dot_halo * paintable * 0.28);
+    c = mix(c, vec3(0.30, 0.92, 0.86), dot_core * paintable * 0.62);
+    return c;
+}
+
 void main() {
     float d_here = texture(u_depth, v_uv).r;
+    float pr_here = texture(u_prot_vis, v_uv).r;
 
     if (u_show_depth > 0.5) {
         vec3 near_c = vec3(0.05, 0.11, 0.24);
         vec3 mid_c  = vec3(0.18, 0.58, 0.68);
         vec3 far_c  = vec3(0.96, 0.94, 0.86);
         vec3 vis = d_here < 0.5 ? mix(near_c, mid_c, d_here * 2.0) : mix(mid_c, far_c, (d_here - 0.5) * 2.0);
+        if (u_show_zone > 0.5) {
+            vis = apply_paintable_zone_dots(vis, d_here, pr_here);
+        }
         frag_color = vec4(vis, 1.0);
         return;
     }
@@ -94,19 +121,28 @@ void main() {
     }
 
     vec3 out_srgb = linear_to_srgb(col);
+    bool on_before_side = (u_split_enabled > 0.5 && v_uv.x < u_split_pos);
+
+    /* Optional subtle dotted color markings showing currently paintable fog area */
+    if (u_show_zone > 0.5 && !on_before_side) {
+        out_srgb = apply_paintable_zone_dots(out_srgb, d_here, pr_here);
+    }
 
     /* Interactive Mark Mode overlay: translucent depth-aware cyan fog mask + emerald protect mask */
-    if (u_show_mask > 0.5 && !(u_split_enabled > 0.5 && v_uv.x < u_split_pos)) {
+    if (u_show_mask > 0.5 && !on_before_side) {
         float m = texture(u_mask_vis, v_uv).r;
-        float pr = texture(u_prot_vis, v_uv).r;
         float d_in = smoothstep(u_mask_depth_min - 0.03, u_mask_depth_min + 0.06, d_here);
-        float m_eff = m * (1.0 - pr);
+        float d_out = (u_mask_depth_max < 0.985)
+            ? (1.0 - smoothstep(u_mask_depth_max - 0.08, u_mask_depth_max + 0.04, d_here))
+            : 1.0;
+        float d_ok = d_in * d_out;
+        float m_eff = m * (1.0 - pr_here);
         /* Show full brush stroke subtly, stronger where depth allows fog */
-        float tint_a = clamp(m_eff * (0.12 + 0.34 * d_in), 0.0, 0.48);
-        vec3 marker_col = mix(vec3(0.45, 0.62, 0.78), vec3(0.32, 0.78, 0.98), d_in);
+        float tint_a = clamp(m_eff * (0.12 + 0.34 * d_ok), 0.0, 0.48);
+        vec3 marker_col = mix(vec3(0.45, 0.62, 0.78), vec3(0.32, 0.78, 0.98), d_ok);
         out_srgb = mix(out_srgb, marker_col, tint_a);
-        if (pr > 0.001) {
-            out_srgb = mix(out_srgb, vec3(0.22, 0.88, 0.52), clamp(pr * 0.42, 0.0, 0.42));
+        if (pr_here > 0.001) {
+            out_srgb = mix(out_srgb, vec3(0.22, 0.88, 0.52), clamp(pr_here * 0.42, 0.0, 0.42));
         }
     }
 

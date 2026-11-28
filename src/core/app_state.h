@@ -71,6 +71,7 @@ typedef struct {
     float split_pos; /* [0, 1] */
     bool show_depth;
     bool show_mask_overlay;
+    bool show_paintable_zone;
 
     /* 3-Tier hardware & Mark -> Render progressive state machine */
     NebelPlatformTier platform_tier;

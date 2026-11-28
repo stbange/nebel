@@ -235,7 +235,7 @@ bool nebel_app_load_image(NebelAppState *app, const NebelImage *img) {
     app->pan_x = 0.0f;
     app->pan_y = 0.0f;
 
-    nebel_fog_layer_init(&app->layers[0], "Valley Mist", app->work_img.width, app->work_img.height);
+    nebel_fog_layer_init(&app->layers[0], "Fog Layer 1", app->work_img.width, app->work_img.height);
     app->layers[0].params.depth_min = 0.40f;
     nebel_image_sample_airlight(&app->work_img, -1.0f, -1.0f, app->layers[0].params.airlight);
     app->layer_count = 1;
