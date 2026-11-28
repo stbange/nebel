@@ -98,6 +98,7 @@
         <ul>
           <li><b>Near Depth &amp; AutoLock (<kbd>A</kbd>):</b> Objects closer than Near Depth stay 100% crisp. Turn on <b>AutoLock</b> and click where the mist starts.</li>
           <li><b>Depth Touch-Up (<kbd>N</kbd> / <kbd>F</kbd>):</b> In Depth View (<kbd>D</kbd>), paint <b>Closer</b> or <b>Farther</b> to fix tricky water reflections or shadows.</li>
+          <li><b>3D Billows &amp; Fine Wisps:</b> Check <b>3D Billows</b> (Option A) for sculpted 3D Worley cloud banks, depth shelves &amp; natural clearings, and <b>Fine Wisps</b> (Option B) for curling wind ribbons &amp; shredded filaments. Enable both for maximum photographic realism, or uncheck both for classic smooth haze.</li>
           <li><b>Valley Flow &amp; Shadow Pool:</b> Flows cold mist around foreground trunks and concentrates denser mist inside cool shadowed hollows.</li>
           <li><b>Shadow Soften:</b> Gently lifts harsh direct sunlight contrast underneath thick fog so sunny photos blend naturally into mist.</li>
           <li><b>HD Desktop Depth Model:</b> Run <code>scripts/download_hd_depth.sh</code> (Linux/Mac) or <code>scripts/download_hd_depth.ps1</code> (Windows) to install the Apache-2.0 <code>DA3Mono-Large</code> model into <code>assets/models/</code>.</li>
@@ -112,7 +113,7 @@
           <tr><td><kbd>B</kbd> / <kbd>E</kbd> / <kbd>P</kbd> / <kbd>S</kbd></td><td>Fog Marker / Eraser / Protect Foreground / Sun Position</td></tr>
           <tr><td><kbd>D</kbd> / <kbd>N</kbd> / <kbd>F</kbd></td><td>Toggle Depth View / Depth Closer brush / Depth Farther brush</td></tr>
           <tr><td><kbd>M</kbd> / <kbd>Space</kbd> / <kbd>A</kbd> / <kbd>R</kbd></td><td>Toggle Mask Overlay / Before-After Split / AutoLock / Randomize Seed</td></tr>
-          <tr><td><kbd>[</kbd> <kbd>]</kbd> / <kbd>Shift+[</kbd> <kbd>]</kbd></td><td>Brush Size / Brush Soft Edge (Feathering for Paint &amp; Erase)</td></tr>
+          <tr><td><kbd>[</kbd> <kbd>]</kbd> / <kbd>Shift+[</kbd> <kbd>]</kbd></td><td>Brush Size / Brush Soft Edge (Fog, Eraser &amp; Protect)</td></tr>
           <tr><td><kbd>Ctrl+Z</kbd> / <kbd>0</kbd> / <kbd>F1</kbd></td><td>Undo / Reset Zoom / Open Online Help</td></tr>
           <tr><td><b>Mobile Touch</b></td><td>1-finger paint · 2-finger pinch zoom/pan · 2-finger tap Undo · 3-finger tap Redo</td></tr>
         </table>
@@ -147,6 +148,7 @@
         <ul>
           <li><b>Start-Tiefe &amp; Tiefe-Fix (<kbd>A</kbd>):</b> Nähere Motive bleiben 100 % klar. Mit aktiviertem <b>Tiefe-Fix</b> genügt ein Klick an den Beginn der Nebelbank.</li>
           <li><b>Tiefe korrigieren (<kbd>N</kbd> / <kbd>F</kbd>):</b> In der Tiefenansicht (<kbd>D</kbd>) können Sie Fehler (z. B. Wasserspiegelungen) lokal <b>Näher</b> oder <b>Ferner</b> malen.</li>
+          <li><b>3D-Schwaden &amp; Feine Fasern:</b> <b>3D-Schwaden</b> (Option A) erzeugt plastische 3D-Worley-Nebelbänke, Tiefenschichten und natürliche Lücken; <b>Feine Fasern</b> (Option B) ergänzt wirbelnde Windschleier und feine Fäden. Beide zusammen liefern maximalen Fotorealismus, beide aus ergibt gleichmäßigen klassischen Dunst.</li>
           <li><b>Talströmung &amp; Schattensenke:</b> Lässt kalten Nebel um Bäume herumfließen und sich in schattigen Senken sammeln.</li>
           <li><b>Schatten mildern:</b> Schwächt harte direkte Sonnenschatten unter dichtem Nebel natürlich ab.</li>
           <li><b>HD-Modell auf dem Desktop:</b> Mit <code>scripts/download_hd_depth.sh</code> (Linux/Mac) oder <code>scripts/download_hd_depth.ps1</code> (Windows) laden Sie das Apache-2.0-Modell <code>DA3Mono-Large</code> in <code>assets/models/</code>.</li>
@@ -161,7 +163,7 @@
           <tr><td><kbd>B</kbd> / <kbd>E</kbd> / <kbd>P</kbd> / <kbd>S</kbd></td><td>Nebel-Marker / Radierer / Vordergrund schützen / Sonnenposition</td></tr>
           <tr><td><kbd>D</kbd> / <kbd>N</kbd> / <kbd>F</kbd></td><td>Tiefenkarte anzeigen / Tiefe näher malen / Tiefe ferner malen</td></tr>
           <tr><td><kbd>M</kbd> / <kbd>Leertaste</kbd> / <kbd>A</kbd> / <kbd>R</kbd></td><td>Maske ein-/ausblenden / Vorher-Nachher / Tiefe-Fix / Neues Muster</td></tr>
-          <tr><td><kbd>[</kbd> <kbd>]</kbd> / <kbd>Umschalt+[</kbd> <kbd>]</kbd></td><td>Pinselgröße / Weiche Kante beim Malen &amp; Löschen</td></tr>
+          <tr><td><kbd>[</kbd> <kbd>]</kbd> / <kbd>Umschalt+[</kbd> <kbd>]</kbd></td><td>Pinselgröße / Weiche Kante (Nebel, Radierer &amp; Schutz)</td></tr>
           <tr><td><kbd>Strg+Z</kbd> / <kbd>0</kbd> / <kbd>F1</kbd></td><td>Rückgängig / Zoom zurücksetzen / Online-Hilfe</td></tr>
           <tr><td><b>Touch-Geräte</b></td><td>1 Finger: Malen · 2 Finger spreizen: Zoom/Verschieben · 2-Finger-Tipp: Zurück · 3-Finger-Tipp: Vor</td></tr>
         </table>
@@ -196,6 +198,7 @@
         <ul>
           <li><b>Bliska głębia i AutoGłębia (<kbd>A</kbd>):</b> Obiekty bliższe niż Bliska głębia pozostają w 100% czyste. Włącz <b>AutoGłębię</b> i kliknij początek mgły.</li>
           <li><b>Korekta głębi (<kbd>N</kbd> / <kbd>F</kbd>):</b> W widoku mapy głębi (<kbd>D</kbd>) pędzle <b>Bliżej</b> i <b>Dalej</b> pozwalają poprawić odbicia w wodzie lub cienie.</li>
+          <li><b>Kłęby 3D i Smugi:</b> <b>Kłęby 3D</b> (Opcja A) tworzy plastyczne ławice Worleya 3D, warstwy głębi i prześwity; <b>Smugi</b> (Opcja B) dodaje wirujące pasma i drobne włókna mgły. Włączenie obu daje maksymalny realizm, a wyłączenie obu — klasyczną gładką mgiełkę.</li>
           <li><b>Spływ doliny i Mgła w cieniu:</b> Opływa pnie drzew i gromadzi gęstszą mgłę w chłodnych zagłębieniach.</li>
           <li><b>Miękkie cienie:</b> Naturalnie łagodzi ostre cienie słoneczne pod gęstą warstwą mgły.</li>
           <li><b>Model HD na Desktopie:</b> Uruchom <code>scripts/download_hd_depth.sh</code> (Linux/Mac) lub <code>scripts/download_hd_depth.ps1</code> (Windows), aby pobrać model Apache 2.0 <code>DA3Mono-Large</code> do <code>assets/models/</code>.</li>
@@ -210,7 +213,7 @@
           <tr><td><kbd>B</kbd> / <kbd>E</kbd> / <kbd>P</kbd> / <kbd>S</kbd></td><td>Pędzel mgły / Gumka / Chroń pierwszy plan / Pozycja słońca</td></tr>
           <tr><td><kbd>D</kbd> / <kbd>N</kbd> / <kbd>F</kbd></td><td>Mapa głębi / Pędzel Bliżej / Pędzel Dalej</td></tr>
           <tr><td><kbd>M</kbd> / <kbd>Spacja</kbd> / <kbd>A</kbd> / <kbd>R</kbd></td><td>Pokaż/ukryj maskę / Podział Przed-Po / AutoGłębia / Losuj układ smug</td></tr>
-          <tr><td><kbd>[</kbd> <kbd>]</kbd> / <kbd>Shift+[</kbd> <kbd>]</kbd></td><td>Rozmiar pędzla / Miękka krawędź malowania i gumki</td></tr>
+          <tr><td><kbd>[</kbd> <kbd>]</kbd> / <kbd>Shift+[</kbd> <kbd>]</kbd></td><td>Rozmiar pędzla / Miękka krawędź (Mgła, Gumka i Ochrona)</td></tr>
           <tr><td><kbd>Ctrl+Z</kbd> / <kbd>0</kbd> / <kbd>F1</kbd></td><td>Cofnij / Reset powiększenia / Pomoc online</td></tr>
           <tr><td><b>Ekran dotykowy</b></td><td>1 palec: malowanie · 2 palce: powiększenie/przesuwanie · 2 palce stuknięcie: Cofnij · 3 palce: Ponów</td></tr>
         </table>

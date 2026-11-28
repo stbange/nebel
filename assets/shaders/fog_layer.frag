@@ -7,6 +7,7 @@ uniform sampler2D u_depth;   /* Normalized 3D depth [0=near, 1=far] in .r */
 uniform sampler2D u_mask;    /* Guided-Filter refined painted fog mask [0,1] in .r */
 uniform sampler2D u_ambient; /* Wide blurred scene illumination map (linear RGB) */
 uniform sampler2D u_flow;    /* Terrain-guided fluid advection displacement (.rg) */
+uniform sampler2D u_fog_tex; /* Seamless multi-channel volumetric detail texture (Option B) */
 
 uniform vec2  u_tile_size;   /* (0,0) for full-frame, (tw,th) for Desktop tiled GPU export */
 uniform float u_density;
@@ -28,6 +29,9 @@ uniform int   u_seed;
 uniform int   u_ray_slices;
 uniform int   u_shadow_steps;
 uniform int   u_sample_idx;
+uniform int   u_use_proc;    /* Option A: procedural 3D Worley billows & clearings */
+uniform int   u_use_tex;     /* Option B: volumetric detail texture wisps & filaments */
+uniform int   u_has_fog_tex; /* 1 when u_fog_tex is loaded */
 
 uint hash_u32(uint x) {
     x ^= x >> 16u;
@@ -36,6 +40,13 @@ uint hash_u32(uint x) {
     x *= 0x846ca68bu;
     x ^= x >> 16u;
     return x;
+}
+
+float hash2d(ivec2 ip, uint seed) {
+    uint h = hash_u32(uint(ip.x) * 374761393u +
+                      uint(ip.y) * 668265263u +
+                      seed * 1442695041u);
+    return float(h & 0x00FFFFFFu) / 16777215.0;
 }
 
 float hash3d(ivec3 ip, uint seed) {
@@ -68,7 +79,7 @@ float value_noise3d(vec3 p, uint seed) {
     return mix(mix(nx00, nx10, u.y), mix(nx01, nx11, u.y), u.z);
 }
 
-/* Full-range contrast-stretched 3D fBm (compensates for 3D trilinear variance narrowing!) */
+/* Full-range contrast-stretched 3D fBm */
 float fbm3d_2(vec3 p, uint seed) {
     float v = 0.667 * value_noise3d(p, seed)
             + 0.333 * value_noise3d(p * 2.07, seed + 97u);
@@ -82,6 +93,28 @@ float fbm3d_3(vec3 p, uint seed) {
     return clamp((v - 0.35) / 0.30, 0.0, 1.0);
 }
 
+/* Smoothly 3D-evolving inverted Worley cellular billows (9-cell 2D lattice + C^inf Z orbit) */
+float worley_billow_3d(vec3 p, uint seed) {
+    vec2 fl = floor(p.xy);
+    ivec2 ip = ivec2(fl);
+    vec2 f = p.xy - fl;
+    float min_d2 = 4.0;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            ivec2 cell = ip + ivec2(dx, dy);
+            float h1 = hash2d(cell, seed);
+            float h2 = hash2d(cell, seed + 53u);
+            vec2 pt = vec2(float(dx), float(dy)) + vec2(
+                0.5 + 0.38 * sin(h1 * 6.2831853 + p.z * 1.35),
+                0.5 + 0.38 * cos(h2 * 6.2831853 + p.z * 1.15)
+            );
+            vec2 dv = pt - f;
+            min_d2 = min(min_d2, dot(dv, dv));
+        }
+    }
+    return clamp(1.0 - sqrt(min_d2) * 1.05, 0.0, 1.0);
+}
+
 float henyey_greenstein(float cos_theta, float g) {
     float g2 = g * g;
     float denom = max(1e-4, 1.0 + g2 - 2.0 * g * cos_theta);
@@ -90,7 +123,7 @@ float henyey_greenstein(float cos_theta, float g) {
     return clamp(p / max(peak, 1e-5), 0.0, 1.0);
 }
 
-/* Depth-coherent 3D world coordinates (prevents CLT washout across 16-24 slices!) */
+/* Depth-coherent 3D world coordinates */
 vec3 fog_world_coord(vec2 uv, float z, uint seed) {
     float persp = 0.56 + (1.0 - z) * 0.64;
     float s_f = float(seed % 10000u);
@@ -102,49 +135,91 @@ vec3 fog_world_coord(vec2 uv, float z, uint seed) {
     );
 }
 
-/* Sculpted 3D volumetric fog field with Nubis-style wispy erosion: returns vec2(density, crest) */
-vec2 fog_volume_3d(vec2 uv, float z, uint seed) {
+/* Volumetric 3D fog field supporting Classic Smooth (0/0), Option A (3D Billows),
+ * Option B (Fine Wisps texture), and Hybrid A+B (default). Returns vec2(density, crest). */
+vec2 fog_volume_3d(vec2 uv, float z, uint seed, bool use_proc, bool use_tex, bool fast_probe) {
     vec3 p = fog_world_coord(uv, z, seed);
+    float na = u_noise_amount;
 
-    /* Swirling domain warp creates organic curling wind ribbons */
-    float qx = fbm3d_2(p * 0.58, seed) - 0.5;
-    float qy = fbm3d_2(p * 0.58 + vec3(4.7, 1.9, 2.3), seed + 17u) - 0.5;
-    vec3 warped = p + vec3(qx * 1.35, qy * 0.72, qx * 0.32) * u_noise_amount;
+    /* Classic smooth haze mode (both structure checkboxes OFF) */
+    if (!use_proc && !use_tex) {
+        float qx = fbm3d_2(p * 0.54, seed) - 0.5;
+        float qy = fbm3d_2(p * 0.54 + vec3(4.7, 1.9, 2.3), seed + 17u) - 0.5;
+        vec3 warped = p + vec3(qx * 0.90, qy * 0.50, qx * 0.20) * na;
+        float macro = fbm3d_2(warped * 0.72, seed + 31u);
+        float turb = mix(1.0, 0.42 + 1.16 * macro, na);
+        float ceiling = u_horizon_y + (1.0 - z) * 0.14 + (macro - 0.5) * 0.16 * na;
+        float h_att = exp(-u_height_falloff * max(0.0, ceiling - uv.y) * 2.8);
+        float crest = clamp(1.0 - max(0.0, uv.y - ceiling) * 3.0, 0.0, 1.0) * (0.45 + 0.55 * macro);
+        return vec2(turb * h_att, crest);
+    }
 
-    /* Coherent billowing banks eroded by crisp mid + fine curling tendrils */
-    float macro = fbm3d_3(warped * 0.78, seed + 31u);
-    float detail = fbm3d_2(vec3(warped.xy * 2.35, warped.z * 2.10), seed + 67u);
-    float fine = clamp((value_noise3d(vec3(warped.xy * 4.4, warped.z * 3.2), seed + 131u) - 0.30) / 0.40, 0.0, 1.0);
-    float wisp = 1.0 - abs(detail * 2.0 - 1.0);
-    float eroded = clamp(macro - (1.0 - detail) * 0.26 * u_noise_amount
-                         + (wisp * 0.14 + (fine - 0.5) * 0.16) * u_noise_amount, 0.0, 1.0);
+    float na_eff = smoothstep(0.0, 0.85, na);
+    float proc_shape = 0.5;
+    float proc_macro = 0.5;
+    if (use_proc) {
+        float qx = fbm3d_2(p * 0.58, seed) - 0.5;
+        float qy = fbm3d_2(p * 0.58 + vec3(4.7, 1.9, 2.3), seed + 17u) - 0.5;
+        vec3 warped = p + vec3(qx * 1.45, qy * 0.78, qx * 0.30) * na;
 
-    float patchy = smoothstep(0.10 * u_noise_amount, 0.86 - 0.08 * u_noise_amount, eroded);
+        vec3 mp = vec3(warped.x * 0.62, warped.y * 0.88, warped.z * 0.72);
+        proc_macro = fast_probe ? fbm3d_2(mp, seed + 31u) : fbm3d_3(mp, seed + 31u);
+        float w1 = worley_billow_3d(vec3(warped.x * 0.88, warped.y * 1.12, warped.z * 0.90), seed + 71u);
+        float w2 = fast_probe ? w1 : worley_billow_3d(vec3(warped.x * 2.05, warped.y * 2.45, warped.z * 1.60), seed + 113u);
+        float w_billow = 0.64 * w1 + 0.36 * w2;
+        float aniso = fbm3d_2(vec3(warped.x * 1.25, warped.y * 3.10, warped.z * 1.40), seed + 67u);
+        float ridge = 1.0 - abs(aniso * 2.0 - 1.0);
+        ridge *= ridge;
+
+        proc_shape = clamp(proc_macro * 0.58 + w_billow * 0.48
+                           - (1.0 - w2) * 0.16 * na
+                           + (ridge - 0.30) * 0.26 * na, 0.0, 1.0);
+    }
+
+    float tex_shape = 0.5;
+    vec4 t1 = vec4(0.5);
+    vec4 t2 = vec4(0.5);
+    if (use_tex) {
+        vec2 uv1 = vec2(p.x * 0.21 + p.z * 0.14, p.y * 0.32 - p.z * 0.11);
+        t1 = texture(u_fog_tex, uv1);
+        vec2 sw = vec2(p.x + (t1.g - 0.52) * 1.35 * na, p.y + (t1.r - 0.56) * 0.80 * na);
+        vec2 uv2 = vec2(sw.x * 0.829 - sw.y * 0.559, sw.x * 0.559 + sw.y * 0.829) * 0.36
+                 + vec2(-p.z * 0.19, p.z * 0.13);
+        t2 = texture(u_fog_tex, uv2);
+        float tex_swirl = 0.55 * t1.g + 0.45 * t1.r;
+        float tex_bank = clamp((tex_swirl - 0.32) / 0.42, 0.0, 1.0);
+        float clear_carve = smoothstep(0.22, 0.74, t1.a);
+        tex_shape = clamp(tex_bank * (0.34 + 0.88 * clear_carve)
+                          + (t2.g - 0.52) * 0.30 * na
+                          + (t2.b - 0.375) * 0.65 * na, 0.0, 1.0);
+    }
+
+    float eroded;
+    float ceil_mod;
+    if (use_proc && use_tex) {
+        float mix_ab = proc_shape * 0.54 + tex_shape * 0.46;
+        eroded = clamp((mix_ab - 0.12) / 0.76
+                       + (t2.b - 0.375) * 0.48 * na, 0.0, 1.0);
+        ceil_mod = 0.65 * proc_macro + 0.35 * t1.g;
+    } else if (use_proc) {
+        eroded = proc_shape;
+        ceil_mod = proc_macro;
+    } else {
+        eroded = tex_shape;
+        ceil_mod = 0.5 * (t1.g + t1.a);
+    }
+
+    /* Density-independent structural clearings (0.07 veil floor) + sculpted billows (2.52 peak) */
+    float patchy = smoothstep(0.20 * na, 0.80 - 0.06 * na, eroded);
     float billow = patchy * sqrt(max(patchy, 0.0001));
-    /* Realistic translucent mist veil (0.24) + dense sculpted billowing banks (+1.85) */
-    float turb = mix(1.0, 0.24 + 1.85 * billow, u_noise_amount);
+    float turb = mix(1.0, 0.07 + 2.45 * billow, na_eff);
 
-    float ceiling = u_horizon_y + (1.0 - z) * 0.14 + (macro - 0.5) * 0.24 * u_noise_amount;
+    float ceiling = u_horizon_y + (1.0 - z) * 0.14 + (ceil_mod - 0.5) * 0.26 * na;
     float above = max(0.0, ceiling - uv.y);
     float h_att = exp(-u_height_falloff * above * 2.8);
 
-    float crest = clamp(1.0 - max(0.0, uv.y - ceiling) * 3.4, 0.0, 1.0) * (0.35 + 0.65 * eroded);
+    float crest = clamp(1.0 - max(0.0, uv.y - ceiling) * 3.4, 0.0, 1.0) * (0.28 + 0.72 * eroded);
     return vec2(turb * h_att, crest);
-}
-
-/* Fast 3D macro density probe for directional self-shadowing inside fog billows */
-float fog_volume_macro_3d(vec2 uv, float z, uint seed) {
-    vec3 p = fog_world_coord(uv, z, seed);
-    float qx = fbm3d_2(p * 0.58, seed) - 0.5;
-    float qy = fbm3d_2(p * 0.58 + vec3(4.7, 1.9, 2.3), seed + 17u) - 0.5;
-    vec3 warped = p + vec3(qx * 1.35, qy * 0.72, qx * 0.32) * u_noise_amount;
-    float macro = fbm3d_2(warped * 0.78, seed + 31u);
-    float patchy = smoothstep(0.10 * u_noise_amount, 0.86 - 0.08 * u_noise_amount, macro);
-    float billow = patchy * sqrt(max(patchy, 0.0001));
-    float turb = mix(1.0, 0.24 + 1.85 * billow, u_noise_amount);
-    float ceiling = u_horizon_y + (1.0 - z) * 0.14 + (macro - 0.5) * 0.24 * u_noise_amount;
-    float above = max(0.0, ceiling - uv.y);
-    return turb * exp(-u_height_falloff * above * 2.8);
 }
 
 void main() {
@@ -174,8 +249,10 @@ void main() {
     int slices = clamp(u_ray_slices, 5, 32);
     int sh_steps = clamp(u_shadow_steps, 0, 16);
     bool do_shadows = (sh_steps > 0);
+    bool use_proc = (u_use_proc != 0);
+    bool use_tex  = (u_use_tex != 0 && u_has_fog_tex != 0);
+    bool structured = (use_proc || use_tex);
 
-    /* Subtle sub-slice anti-aliasing jitter (preserves crisp 3D billows!) + full shadow ray jitter */
     float jitter = 0.5;
     float sh_jit = 0.5;
     if (u_sample_idx > 0) {
@@ -206,8 +283,13 @@ void main() {
     float d_span = max(0.08, u_depth_max - u_depth_min);
     float slice_norm = 1.12 / float(slices);
     uint base_seed = uint(max(u_seed, 0));
+    float na_eff = smoothstep(0.0, 0.85, u_noise_amount);
+    float s_amt = structured ? na_eff : 0.0;
 
-    /* True front-to-back volumetric radiative transfer with directional cloud self-shadowing */
+    vec3 shadow_col = mix(vec3(0.64, 0.74, 0.90), vec3(0.48, 0.62, 0.84), s_amt);
+    vec3 sunlit_col = mix(vec3(1.18, 1.13, 1.04), vec3(1.30, 1.22, 1.08), s_amt);
+
+    /* True front-to-back 3D volumetric radiative transfer */
     float T = 1.0;
     vec3 accum_L = vec3(0.0);
 
@@ -218,19 +300,35 @@ void main() {
         float in_front = smoothstep(z_s - 0.055, z_s + 0.045, d);
         if (in_front <= 0.0005) continue;
 
-        vec2 vol = fog_volume_3d(adv_uv, z_s, base_seed);
+        /* 3 coherent depth shelves prevent radial slice smearing when A or B is active */
+        float z_vol = z_s;
+        float shelf_w = 1.0;
+        if (s_amt > 0.001) {
+            float d0 = (frac - 0.20) / 0.13;
+            float d1 = (frac - 0.54) / 0.14;
+            float d2 = (frac - 0.86) / 0.13;
+            float s0 = exp(-d0 * d0);
+            float s1 = exp(-d1 * d1);
+            float s2 = exp(-d2 * d2);
+            float ssum = s0 + s1 + s2;
+            float f_anc = (0.20 * s0 + 0.54 * s1 + 0.86 * s2) / max(ssum, 0.0001);
+            z_vol = u_depth_min + d_span * mix(frac, f_anc, 0.74 * s_amt);
+            shelf_w = mix(1.0, 0.18 + 1.24 * ssum, s_amt);
+        }
+
+        vec2 vol = fog_volume_3d(adv_uv, z_vol, base_seed, use_proc, use_tex, false);
         float sheet = vol.x;
         float crest = vol.y;
-        float weight = (0.76 + 0.48 * frac) * slice_norm;
+        float weight = (0.76 + 0.48 * frac) * slice_norm * shelf_w;
 
-        /* Strong organic 3D feathered brush silhouette per depth slice */
+        /* Organic 3D feathered brush silhouette per depth slice */
         float edge_s = smoothstep(0.04, 0.88, m + (sheet - 0.72) * u_noise_amount * 0.88);
         float m_org_s = mix(m, m * (0.20 + 1.18 * edge_s), u_noise_amount);
 
         float dt_s = u_density * m_org_s * d_enter * d_exit * pool_factor * sheet * in_front * weight;
         if (dt_s <= 0.0001) continue;
 
-        /* 1. Terrain 3D heightfield shadow cone (local ridges & trees cast volumetric shafts) */
+        /* 1. Terrain 3D heightfield shadow cone */
         float terrain_vis = 1.0;
         if (do_shadows) {
             float occ = 0.0;
@@ -244,18 +342,21 @@ void main() {
             terrain_vis = exp(-(occ / float(sh_steps)) * 1.75);
         }
 
-        /* 2. Directional cloud self-shadowing + Beer-Powder sunlit rim relief */
-        vec2 sun_uv = clamp(adv_uv + sun_dir * 0.042 + vec2(0.0, -0.022), 0.0, 1.0);
-        float sheet_sun = fog_volume_macro_3d(sun_uv, max(0.0, z_s - 0.045), base_seed);
-        float self_shadow = exp(-sheet_sun * u_density * (0.25 + 0.65 * u_noise_amount));
+        /* 2. Directional cloud self-shadowing + high-detail bump relief inside thick fog */
+        float sun_step = mix(0.042, 0.026, s_amt);
+        float sun_up   = mix(0.022, 0.015, s_amt);
+        float sun_dz   = mix(0.045, 0.035, s_amt);
+        vec2 sun_uv = clamp(adv_uv + sun_dir * sun_step + vec2(0.0, -sun_up), 0.0, 1.0);
+        float sheet_sun = fog_volume_3d(sun_uv, max(0.0, z_vol - sun_dz), base_seed, use_proc, use_tex, true).x;
+        float self_shadow = exp(-sheet_sun * u_density * (0.26 + mix(0.55, 0.78, s_amt) * u_noise_amount));
         float powder = 1.0 - 0.62 * exp(-sheet * u_density * 1.8);
-        float slice_vis = clamp(terrain_vis * (0.28 + 0.72 * self_shadow), 0.0, 1.0);
+        float sh_floor = mix(0.30, 0.22, s_amt);
+        float slice_vis = clamp(terrain_vis * (sh_floor + (1.0 - sh_floor) * self_shadow), 0.0, 1.0);
+        float bump = clamp((sheet - sheet_sun) * 0.80, -0.65, 0.72) * s_amt;
 
-        /* 3. Sculpted 3D slice radiance: luminous sunlit crests vs cool shaded bellies */
-        vec3 shadow_col = vec3(0.60, 0.72, 0.90);
-        vec3 sunlit_col = vec3(1.22, 1.15, 1.04);
-        vec3 relief_tint = mix(shadow_col, sunlit_col, clamp(slice_vis * 0.72 + crest * 0.34, 0.0, 1.0));
-        /* Aerial depth perspective: near mist wisps crisp & luminous, far banks cooler */
+        /* 3. Sculpted 3D slice radiance: sunlit crests/ridges vs cool shaded folds */
+        float relief_t = clamp(slice_vis * mix(0.72, 0.60, s_amt) + crest * 0.32 + bump * 0.36, 0.0, 1.0);
+        vec3 relief_tint = mix(shadow_col, sunlit_col, relief_t);
         vec3 depth_tint = mix(vec3(1.06, 1.03, 1.00), vec3(0.90, 0.96, 1.04), frac);
         vec3 tinted_air = u_airlight * relief_tint * depth_tint;
         vec3 local_air = mix(tinted_air, tinted_air * (0.40 + 1.16 * s_lum) + amb * 0.28, 0.60);

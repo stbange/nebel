@@ -230,6 +230,20 @@ static void load_icons(NebelRenderer *r) {
     if (r->icon_count < 1) r->icon_count = 1;
 }
 
+static void load_fog_struct_tex(NebelRenderer *r) {
+    char path[384];
+    if (!nebel_path_join_asset(r->asset_root, "assets/textures/fog_structure.png", path, sizeof(path))) return;
+    int w = 0, h = 0, c = 0;
+    uint8_t *px = stbi_load(path, &w, &h, &c, 4);
+    if (!px) return;
+    r->tex_fog_struct = make_tex(GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    stbi_image_free(px);
+}
+
 bool nebel_renderer_init(NebelRenderer *r, const char *asset_root) {
     if (!r) return false;
     memset(r, 0, sizeof(*r));
@@ -270,6 +284,7 @@ bool nebel_renderer_init(NebelRenderer *r, const char *asset_root) {
         nebel_font_load(&r->font, font_path, 15.0f);
     }
     load_icons(r);
+    load_fog_struct_tex(r);
     return true;
 }
 
@@ -277,10 +292,11 @@ void nebel_renderer_free(NebelRenderer *r) {
     if (!r) return;
     destroy_fbos(r);
     nebel_font_free(&r->font);
-    if (r->tex_photo)   glDeleteTextures(1, &r->tex_photo);
-    if (r->tex_depth)   glDeleteTextures(1, &r->tex_depth);
-    if (r->tex_protect) glDeleteTextures(1, &r->tex_protect);
-    if (r->tex_icons)   glDeleteTextures(1, &r->tex_icons);
+    if (r->tex_photo)      glDeleteTextures(1, &r->tex_photo);
+    if (r->tex_depth)      glDeleteTextures(1, &r->tex_depth);
+    if (r->tex_protect)    glDeleteTextures(1, &r->tex_protect);
+    if (r->tex_fog_struct) glDeleteTextures(1, &r->tex_fog_struct);
+    if (r->tex_icons)      glDeleteTextures(1, &r->tex_icons);
     for (int i = 0; i < NEBEL_MAX_LAYERS; i++) {
         if (r->tex_masks[i]) glDeleteTextures(1, &r->tex_masks[i]);
     }
@@ -513,6 +529,8 @@ static GLuint run_fog_layers_sample(NebelRenderer *r, const NebelAppState *app,
     glUniform1i(glGetUniformLocation(r->prog_fog, "u_mask"), 2);
     glUniform1i(glGetUniformLocation(r->prog_fog, "u_ambient"), 3);
     glUniform1i(glGetUniformLocation(r->prog_fog, "u_flow"), 4);
+    glUniform1i(glGetUniformLocation(r->prog_fog, "u_fog_tex"), 5);
+    glUniform1i(glGetUniformLocation(r->prog_fog, "u_has_fog_tex"), r->tex_fog_struct ? 1 : 0);
     glUniform2f(glGetUniformLocation(r->prog_fog, "u_tile_size"), 0.0f, 0.0f);
     glUniform1i(glGetUniformLocation(r->prog_fog, "u_ray_slices"), ray_slices);
     glUniform1i(glGetUniformLocation(r->prog_fog, "u_shadow_steps"), shadow_steps);
@@ -521,6 +539,7 @@ static GLuint run_fog_layers_sample(NebelRenderer *r, const NebelAppState *app,
     glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, r->tex_depth);
     glActiveTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_2D, r->tex_amb[1]);
     glActiveTexture(GL_TEXTURE4); glBindTexture(GL_TEXTURE_2D, r->tex_flow[r->flow_active]);
+    glActiveTexture(GL_TEXTURE5); glBindTexture(GL_TEXTURE_2D, r->tex_fog_struct ? r->tex_fog_struct : r->tex_photo);
 
     for (int li = 0; li < app->layer_count; li++) {
         const NebelFogLayer *layer = &app->layers[li];
@@ -548,6 +567,8 @@ static GLuint run_fog_layers_sample(NebelRenderer *r, const NebelAppState *app,
         glUniform1f(glGetUniformLocation(r->prog_fog, "u_delight_strength"), p->delight_strength);
         glUniform1f(glGetUniformLocation(r->prog_fog, "u_god_rays_hint"), p->god_rays);
         glUniform1i(glGetUniformLocation(r->prog_fog, "u_seed"), (int)(p->noise_seed % 10000u));
+        glUniform1i(glGetUniformLocation(r->prog_fog, "u_use_proc"), p->struct_procedural ? 1 : 0);
+        glUniform1i(glGetUniformLocation(r->prog_fog, "u_use_tex"), p->struct_texture ? 1 : 0);
 
         draw_quad(r->prog_fog, 0, 0, (float)w, (float)h, (float)w, (float)h, 0, 1, 1, 0);
         cur_tex = r->tex_ping[ping];
@@ -842,6 +863,8 @@ bool nebel_renderer_render_full(NebelRenderer *r, NebelAppState *app, NebelImage
             glUniform1i(glGetUniformLocation(r->prog_fog, "u_mask"), 2);
             glUniform1i(glGetUniformLocation(r->prog_fog, "u_ambient"), 3);
             glUniform1i(glGetUniformLocation(r->prog_fog, "u_flow"), 4);
+            glUniform1i(glGetUniformLocation(r->prog_fog, "u_fog_tex"), 5);
+            glUniform1i(glGetUniformLocation(r->prog_fog, "u_has_fog_tex"), r->tex_fog_struct ? 1 : 0);
             glUniform2f(glGetUniformLocation(r->prog_fog, "u_tile_size"), (float)tw, (float)th);
             glUniform1i(glGetUniformLocation(r->prog_fog, "u_ray_slices"), slices);
             glUniform1i(glGetUniformLocation(r->prog_fog, "u_shadow_steps"), sh_steps);
@@ -850,6 +873,7 @@ bool nebel_renderer_render_full(NebelRenderer *r, NebelAppState *app, NebelImage
             glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, r->tex_depth);
             glActiveTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_2D, r->tex_amb[1]);
             glActiveTexture(GL_TEXTURE4); glBindTexture(GL_TEXTURE_2D, r->tex_flow[r->flow_active]);
+            glActiveTexture(GL_TEXTURE5); glBindTexture(GL_TEXTURE_2D, r->tex_fog_struct ? r->tex_fog_struct : r->tex_photo);
 
             for (int li = 0; li < app->layer_count; li++) {
                 const NebelFogLayer *layer = &app->layers[li];
@@ -877,6 +901,8 @@ bool nebel_renderer_render_full(NebelRenderer *r, NebelAppState *app, NebelImage
                 glUniform1f(glGetUniformLocation(r->prog_fog, "u_delight_strength"), p->delight_strength);
                 glUniform1f(glGetUniformLocation(r->prog_fog, "u_god_rays_hint"), p->god_rays);
                 glUniform1i(glGetUniformLocation(r->prog_fog, "u_seed"), (int)(p->noise_seed % 10000u));
+                glUniform1i(glGetUniformLocation(r->prog_fog, "u_use_proc"), p->struct_procedural ? 1 : 0);
+                glUniform1i(glGetUniformLocation(r->prog_fog, "u_use_tex"), p->struct_texture ? 1 : 0);
 
                 draw_quad(r->prog_fog, 0, 0, (float)tw, (float)th, (float)tw, (float)th, u0, v1, u1, v0);
                 cur_tex = t_texs[ping];

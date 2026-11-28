@@ -21,6 +21,7 @@ typedef struct {
     GLuint tex_depth;
     GLuint tex_protect;
     GLuint tex_masks[NEBEL_MAX_LAYERS];
+    GLuint tex_fog_struct;
     GLuint tex_icons;
     int icon_count;
 

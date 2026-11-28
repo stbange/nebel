@@ -24,6 +24,7 @@ bool nebel_image_from_rgba8(NebelImage *img, const uint8_t *rgba8, int width, in
 void nebel_image_to_rgba8(const NebelImage *img, uint8_t *out_rgba8);
 
 bool nebel_image_load_file(NebelImage *img, const char *path);
+bool nebel_image_load_raw(NebelImage *img, const char *path);
 bool nebel_image_load_memory(NebelImage *img, const uint8_t *bytes, size_t len);
 bool nebel_image_save_png(const NebelImage *img, const char *path);
 bool nebel_image_save_jpg(const NebelImage *img, const char *path, int quality);

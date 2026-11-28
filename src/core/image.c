@@ -103,6 +103,22 @@ bool nebel_image_load_file(NebelImage *img, const char *path) {
     return ok;
 }
 
+bool nebel_image_load_raw(NebelImage *img, const char *path) {
+    if (!img || !path || path[0] == '\0') return false;
+    int w = 0, h = 0, comp = 0;
+    uint8_t *data = stbi_load(path, &w, &h, &comp, 4);
+    if (!data) return false;
+    bool ok = nebel_image_alloc(img, w, h);
+    if (ok) {
+        size_t n = (size_t)w * (size_t)h * 4u;
+        for (size_t i = 0; i < n; i++) {
+            img->rgba[i] = (float)data[i] / 255.0f;
+        }
+    }
+    stbi_image_free(data);
+    return ok;
+}
+
 bool nebel_image_load_memory(NebelImage *img, const uint8_t *bytes, size_t len) {
     if (!img || !bytes || len == 0 || len > (size_t)INT32_MAX) return false;
     int w = 0, h = 0, comp = 0;

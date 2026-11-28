@@ -412,6 +412,20 @@ static int l_ui_slider(lua_State *L) {
     lua_pushboolean(L, changed);
     return 2;
 }
+static int l_ui_checkbox(lua_State *L) {
+    NebelAppState *app = get_app(L);
+    uint32_t id = (uint32_t)luaL_checkinteger(L, 1);
+    float x = (float)luaL_checknumber(L, 2);
+    float y = (float)luaL_checknumber(L, 3);
+    float w = (float)luaL_checknumber(L, 4);
+    float h = (float)luaL_checknumber(L, 5);
+    const char *label = luaL_optstring(L, 6, "");
+    bool checked = lua_toboolean(L, 7) != 0;
+    bool clicked = nebel_ui_checkbox(&app->ui, id, x, y, w, h, label, checked);
+    if (clicked) nebel_app_queue_audio(app, "assets/sounds/ui_click.wav", 0.4f);
+    lua_pushboolean(L, clicked);
+    return 1;
+}
 static int l_ui_progress_bar(lua_State *L) {
     NebelAppState *app = get_app(L);
     nebel_ui_progress_bar(&app->ui,
@@ -515,7 +529,8 @@ static void register_api(lua_State *L) {
     static const luaL_Reg ui_fn[] = {
         {"panel", l_ui_panel}, {"label", l_ui_label}, {"ring", l_ui_ring},
         {"button", l_ui_button}, {"accent_button", l_ui_accent_button},
-        {"slider", l_ui_slider}, {"progress_bar", l_ui_progress_bar},
+        {"slider", l_ui_slider}, {"checkbox", l_ui_checkbox},
+        {"progress_bar", l_ui_progress_bar},
         {"tooltip", l_ui_tooltip}, {"last_hovered", l_ui_last_hovered},
         {"set_modal", l_ui_set_modal},
         {"is_touch_mode", l_ui_is_touch_mode}, {"viewport_size", l_ui_viewport_size},

@@ -19,6 +19,7 @@
     "assets/shaders/ui.frag",
     "assets/fonts/DejaVuSans.ttf",
     "assets/icons/icons_atlas.png",
+    "assets/textures/fog_structure.png",
     "assets/sounds/ui_click.wav",
     "assets/sounds/brush_soft.wav",
     "assets/sounds/export_shutter.wav",

@@ -56,12 +56,20 @@ void nebel_app_init(NebelAppState *app, const char *asset_root) {
     app->render_dirty = true;
     app->show_mask_overlay = true;
     snprintf(app->lang, sizeof(app->lang), "en");
+    {
+        char tex_path[384];
+        if (nebel_path_join_asset(app->asset_root, "assets/textures/fog_structure.png",
+                                  tex_path, sizeof(tex_path))) {
+            (void)nebel_image_load_raw(&app->fog_struct_tex, tex_path);
+        }
+    }
     nebel_app_set_status(app, "Ready - mark fog area and press Render");
 }
 
 void nebel_app_free(NebelAppState *app) {
     if (!app) return;
     free_image_buffers(app);
+    nebel_image_free(&app->fog_struct_tex);
     nebel_undo_free(&app->undo);
 }
 
@@ -352,6 +360,8 @@ bool nebel_app_set_layer_param(NebelAppState *app, int index, const char *key, f
         app->dirty_masks_gpu = true;
     }
     else if (strcmp(key, "noise_seed") == 0) p->noise_seed = (uint32_t)(value > 0.0f ? value : 1.0f);
+    else if (strcmp(key, "struct_procedural") == 0) p->struct_procedural = (value >= 0.5f);
+    else if (strcmp(key, "struct_texture") == 0) p->struct_texture = (value >= 0.5f);
     else if (strcmp(key, "visible") == 0) p->visible = (value >= 0.5f);
     else return false;
 
@@ -386,6 +396,8 @@ bool nebel_app_get_layer_param(const NebelAppState *app, int index, const char *
     else if (strcmp(key, "grain_match") == 0) *out_val = p->grain_match;
     else if (strcmp(key, "edge_refine") == 0) *out_val = p->edge_refine;
     else if (strcmp(key, "noise_seed") == 0) *out_val = (float)p->noise_seed;
+    else if (strcmp(key, "struct_procedural") == 0) *out_val = p->struct_procedural ? 1.0f : 0.0f;
+    else if (strcmp(key, "struct_texture") == 0) *out_val = p->struct_texture ? 1.0f : 0.0f;
     else if (strcmp(key, "visible") == 0) *out_val = p->visible ? 1.0f : 0.0f;
     else return false;
     return true;
@@ -720,6 +732,7 @@ bool nebel_app_render_full(const NebelAppState *app, NebelImage *out) {
     if (!app || !app->orig_img.rgba || !out) return false;
     NebelRenderQuality rq = {0};
     nebel_app_get_render_budget(app, NULL, &rq.ray_slices, &rq.shadow_steps, &rq.fluid_steps, NULL);
+    rq.struct_tex = app->fog_struct_tex.rgba ? &app->fog_struct_tex : NULL;
     return nebel_fog_render_cpu_ex(&app->orig_img,
                                    app->depth_map, app->work_img.width, app->work_img.height,
                                    app->protect_mask, app->work_img.width, app->work_img.height,

@@ -33,7 +33,7 @@ void nebel_fog_params_default(NebelFogParams *p) {
     p->sun_strength = 0.35f;
     p->sun_anisotropy = 0.62f;
     p->noise_scale = 5.0f;
-    p->noise_amount = 0.38f;
+    p->noise_amount = 0.62f;
     p->bloom_amount = 0.25f;
     p->god_rays = 0.35f;
     p->shadow_pool = 0.35f;
@@ -42,6 +42,8 @@ void nebel_fog_params_default(NebelFogParams *p) {
     p->grain_match = 1.0f;
     p->edge_refine = 0.85f;
     p->noise_seed = 1337u;
+    p->struct_procedural = true;
+    p->struct_texture = true;
     p->visible = true;
 }
 
@@ -407,6 +409,59 @@ static float fbm3d_3(float x, float y, float z, uint32_t seed) {
     return clampf((v - 0.35f) / 0.30f, 0.0f, 1.0f);
 }
 
+/* Smoothly 3D-evolving inverted Worley cellular billows (1:1 match with fog_layer.frag) */
+static float worley_billow_3d(float x, float y, float z, uint32_t seed) {
+    int ix = (int)floorf(x);
+    int iy = (int)floorf(y);
+    float fx = x - (float)ix;
+    float fy = y - (float)iy;
+    float min_d2 = 4.0f;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            float h1 = hash2d(ix + dx, iy + dy, seed);
+            float h2 = hash2d(ix + dx, iy + dy, seed + 53u);
+            float px = (float)dx + 0.5f + 0.38f * sinf(h1 * 6.2831853f + z * 1.35f);
+            float py = (float)dy + 0.5f + 0.38f * cosf(h2 * 6.2831853f + z * 1.15f);
+            float vx = px - fx;
+            float vy = py - fy;
+            float d2 = vx * vx + vy * vy;
+            if (d2 < min_d2) min_d2 = d2;
+        }
+    }
+    return clampf(1.0f - sqrtf(min_d2) * 1.05f, 0.0f, 1.0f);
+}
+
+/* OpenGL GL_REPEAT + GL_LINEAR wrap-bilinear lookup for fog_structure.png */
+static void sample_struct_tex(const NebelImage *tex, float u, float v, float out[4]) {
+    if (!tex || !tex->rgba || tex->width <= 0 || tex->height <= 0) {
+        out[0] = out[1] = out[2] = out[3] = 0.5f;
+        return;
+    }
+    int w = tex->width;
+    int h = tex->height;
+    float fu = u - floorf(u);
+    float fv = v - floorf(v);
+    float sx = fu * (float)w - 0.5f;
+    float sy = fv * (float)h - 0.5f;
+    int ix0 = (int)floorf(sx);
+    int iy0 = (int)floorf(sy);
+    float fx = sx - (float)ix0;
+    float fy = sy - (float)iy0;
+    int x0 = ((ix0 % w) + w) % w;
+    int y0 = ((iy0 % h) + h) % h;
+    int x1 = (x0 + 1) % w;
+    int y1 = (y0 + 1) % h;
+    const float *p00 = &tex->rgba[((size_t)y0 * (size_t)w + (size_t)x0) * 4u];
+    const float *p10 = &tex->rgba[((size_t)y0 * (size_t)w + (size_t)x1) * 4u];
+    const float *p01 = &tex->rgba[((size_t)y1 * (size_t)w + (size_t)x0) * 4u];
+    const float *p11 = &tex->rgba[((size_t)y1 * (size_t)w + (size_t)x1) * 4u];
+    for (int c = 0; c < 4; c++) {
+        float top = p00[c] + (p10[c] - p00[c]) * fx;
+        float bot = p01[c] + (p11[c] - p01[c]) * fx;
+        out[c] = top + (bot - top) * fy;
+    }
+}
+
 static void fog_world_coord(float u, float v, float z, const NebelFogParams *p, uint32_t seed,
                             float *ox, float *oy, float *oz) {
     float persp = 0.56f + (1.0f - z) * 0.64f;
@@ -417,57 +472,105 @@ static void fog_world_coord(float u, float v, float z, const NebelFogParams *p, 
     *oz = z * 1.25f + s_f * 0.07f;
 }
 
-/* Continuous 3D volumetric fog field with wispy erosion matching fog_layer.frag 1:1 */
+/* Continuous 3D volumetric fog field matching fog_layer.frag 1:1 across all 4 A/B modes */
 static void fog_volume_3d(float u, float v, float z, const NebelFogParams *p, uint32_t seed,
+                          const NebelImage *struct_tex, bool use_proc, bool use_tex, bool fast_probe,
                           float *out_density, float *out_crest) {
     float px, py, pz;
     fog_world_coord(u, v, z, p, seed, &px, &py, &pz);
+    float na = p->noise_amount;
 
-    float qx = fbm3d_2(px * 0.58f, py * 0.58f, pz * 0.58f, seed) - 0.5f;
-    float qy = fbm3d_2(px * 0.58f + 4.7f, py * 0.58f + 1.9f, pz * 0.58f + 2.3f, seed + 17u) - 0.5f;
-    float wx = px + qx * 1.35f * p->noise_amount;
-    float wy = py + qy * 0.72f * p->noise_amount;
-    float wz = pz + qx * 0.32f * p->noise_amount;
+    if (!use_proc && !use_tex) {
+        float qx = fbm3d_2(px * 0.54f, py * 0.54f, pz * 0.54f, seed) - 0.5f;
+        float qy = fbm3d_2(px * 0.54f + 4.7f, py * 0.54f + 1.9f, pz * 0.54f + 2.3f, seed + 17u) - 0.5f;
+        float wx = px + qx * 0.90f * na;
+        float wy = py + qy * 0.50f * na;
+        float wz = pz + qx * 0.20f * na;
+        float macro = fbm3d_2(wx * 0.72f, wy * 0.72f, wz * 0.72f, seed + 31u);
+        float turb = (1.0f - na) + (0.42f + 1.16f * macro) * na;
+        float ceiling = p->horizon_y + (1.0f - z) * 0.14f + (macro - 0.5f) * 0.16f * na;
+        float above = ceiling - v;
+        if (above < 0.0f) above = 0.0f;
+        float h_att = expf(-p->height_falloff * above * 2.8f);
+        float below = v - ceiling;
+        if (below < 0.0f) below = 0.0f;
+        *out_density = turb * h_att;
+        if (out_crest) *out_crest = clampf(1.0f - below * 3.0f, 0.0f, 1.0f) * (0.45f + 0.55f * macro);
+        return;
+    }
 
-    float macro = fbm3d_3(wx * 0.78f, wy * 0.78f, wz * 0.78f, seed + 31u);
-    float detail = fbm3d_2(wx * 2.35f, wy * 2.35f, wz * 2.10f, seed + 67u);
-    float fine = clampf((value_noise3d(wx * 4.4f, wy * 4.4f, wz * 3.2f, seed + 131u) - 0.30f) / 0.40f, 0.0f, 1.0f);
-    float wisp = 1.0f - fabsf(detail * 2.0f - 1.0f);
-    float eroded = clampf(macro - (1.0f - detail) * 0.26f * p->noise_amount
-                          + (wisp * 0.14f + (fine - 0.5f) * 0.16f) * p->noise_amount, 0.0f, 1.0f);
+    float na_eff = smoothstepf(0.0f, 0.85f, na);
+    float proc_shape = 0.5f;
+    float proc_macro = 0.5f;
+    if (use_proc) {
+        float qx = fbm3d_2(px * 0.58f, py * 0.58f, pz * 0.58f, seed) - 0.5f;
+        float qy = fbm3d_2(px * 0.58f + 4.7f, py * 0.58f + 1.9f, pz * 0.58f + 2.3f, seed + 17u) - 0.5f;
+        float wx = px + qx * 1.45f * na;
+        float wy = py + qy * 0.78f * na;
+        float wz = pz + qx * 0.30f * na;
 
-    float patchy = smoothstepf(0.10f * p->noise_amount, 0.86f - 0.08f * p->noise_amount, eroded);
+        proc_macro = fast_probe
+            ? fbm3d_2(wx * 0.62f, wy * 0.88f, wz * 0.72f, seed + 31u)
+            : fbm3d_3(wx * 0.62f, wy * 0.88f, wz * 0.72f, seed + 31u);
+        float w1 = worley_billow_3d(wx * 0.88f, wy * 1.12f, wz * 0.90f, seed + 71u);
+        float w2 = fast_probe ? w1 : worley_billow_3d(wx * 2.05f, wy * 2.45f, wz * 1.60f, seed + 113u);
+        float w_billow = 0.64f * w1 + 0.36f * w2;
+        float aniso = fbm3d_2(wx * 1.25f, wy * 3.10f, wz * 1.40f, seed + 67u);
+        float ridge = 1.0f - fabsf(aniso * 2.0f - 1.0f);
+        ridge *= ridge;
+
+        proc_shape = clampf(proc_macro * 0.58f + w_billow * 0.48f
+                            - (1.0f - w2) * 0.16f * na
+                            + (ridge - 0.30f) * 0.26f * na, 0.0f, 1.0f);
+    }
+
+    float tex_shape = 0.5f;
+    float t1[4] = { 0.5f, 0.5f, 0.5f, 0.5f };
+    float t2[4] = { 0.5f, 0.5f, 0.5f, 0.5f };
+    if (use_tex) {
+        float u1 = px * 0.21f + pz * 0.14f;
+        float v1 = py * 0.32f - pz * 0.11f;
+        sample_struct_tex(struct_tex, u1, v1, t1);
+        float swx = px + (t1[1] - 0.52f) * 1.35f * na;
+        float swy = py + (t1[0] - 0.56f) * 0.80f * na;
+        float u2 = (swx * 0.829f - swy * 0.559f) * 0.36f - pz * 0.19f;
+        float v2 = (swx * 0.559f + swy * 0.829f) * 0.36f + pz * 0.13f;
+        sample_struct_tex(struct_tex, u2, v2, t2);
+        float tex_swirl = 0.55f * t1[1] + 0.45f * t1[0];
+        float tex_bank = clampf((tex_swirl - 0.32f) / 0.42f, 0.0f, 1.0f);
+        float clear_carve = smoothstepf(0.22f, 0.74f, t1[3]);
+        tex_shape = clampf(tex_bank * (0.34f + 0.88f * clear_carve)
+                           + (t2[1] - 0.52f) * 0.30f * na
+                           + (t2[2] - 0.375f) * 0.65f * na, 0.0f, 1.0f);
+    }
+
+    float eroded, ceil_mod;
+    if (use_proc && use_tex) {
+        float mix_ab = proc_shape * 0.54f + tex_shape * 0.46f;
+        eroded = clampf((mix_ab - 0.12f) / 0.76f
+                        + (t2[2] - 0.375f) * 0.48f * na, 0.0f, 1.0f);
+        ceil_mod = 0.65f * proc_macro + 0.35f * t1[1];
+    } else if (use_proc) {
+        eroded = proc_shape;
+        ceil_mod = proc_macro;
+    } else {
+        eroded = tex_shape;
+        ceil_mod = 0.5f * (t1[1] + t1[3]);
+    }
+
+    float patchy = smoothstepf(0.20f * na, 0.80f - 0.06f * na, eroded);
     float billow = patchy * sqrtf(patchy > 0.0001f ? patchy : 0.0001f);
-    float turb = (1.0f - p->noise_amount) + (0.24f + 1.85f * billow) * p->noise_amount;
+    float turb = (1.0f - na_eff) + (0.07f + 2.45f * billow) * na_eff;
 
-    float ceiling = p->horizon_y + (1.0f - z) * 0.14f + (macro - 0.5f) * 0.24f * p->noise_amount;
+    float ceiling = p->horizon_y + (1.0f - z) * 0.14f + (ceil_mod - 0.5f) * 0.26f * na;
     float above = ceiling - v;
     if (above < 0.0f) above = 0.0f;
     float h_att = expf(-p->height_falloff * above * 2.8f);
 
     float below = v - ceiling;
     if (below < 0.0f) below = 0.0f;
-    float crest = clampf(1.0f - below * 3.4f, 0.0f, 1.0f) * (0.35f + 0.65f * eroded);
     *out_density = turb * h_att;
-    *out_crest = crest;
-}
-
-static float fog_volume_macro_3d(float u, float v, float z, const NebelFogParams *p, uint32_t seed) {
-    float px, py, pz;
-    fog_world_coord(u, v, z, p, seed, &px, &py, &pz);
-    float qx = fbm3d_2(px * 0.58f, py * 0.58f, pz * 0.58f, seed) - 0.5f;
-    float qy = fbm3d_2(px * 0.58f + 4.7f, py * 0.58f + 1.9f, pz * 0.58f + 2.3f, seed + 17u) - 0.5f;
-    float wx = px + qx * 1.35f * p->noise_amount;
-    float wy = py + qy * 0.72f * p->noise_amount;
-    float wz = pz + qx * 0.32f * p->noise_amount;
-    float macro = fbm3d_2(wx * 0.78f, wy * 0.78f, wz * 0.78f, seed + 31u);
-    float patchy = smoothstepf(0.10f * p->noise_amount, 0.86f - 0.08f * p->noise_amount, macro);
-    float billow = patchy * sqrtf(patchy > 0.0001f ? patchy : 0.0001f);
-    float turb = (1.0f - p->noise_amount) + (0.24f + 1.85f * billow) * p->noise_amount;
-    float ceiling = p->horizon_y + (1.0f - z) * 0.14f + (macro - 0.5f) * 0.24f * p->noise_amount;
-    float above = ceiling - v;
-    if (above < 0.0f) above = 0.0f;
-    return turb * expf(-p->height_falloff * above * 2.8f);
+    if (out_crest) *out_crest = clampf(1.0f - below * 3.4f, 0.0f, 1.0f) * (0.28f + 0.72f * eroded);
 }
 
 bool nebel_fog_render_cpu_ex(const NebelImage *src,
@@ -483,6 +586,7 @@ bool nebel_fog_render_cpu_ex(const NebelImage *src,
     int ray_slices = quality ? quality->ray_slices : 12;
     int shadow_steps = quality ? quality->shadow_steps : 8;
     int fluid_steps = quality ? quality->fluid_steps : 12;
+    const NebelImage *struct_tex = quality ? quality->struct_tex : NULL;
     if (ray_slices < 5) ray_slices = 5;
     if (ray_slices > 32) ray_slices = 32;
     if (shadow_steps < 0) shadow_steps = 0;
@@ -595,9 +699,22 @@ bool nebel_fog_render_cpu_ex(const NebelImage *src,
 
         uint32_t base_seed = p.noise_seed % 10000u;
         bool do_shadows = (depth_map != NULL && shadow_steps > 0);
+        bool use_proc = p.struct_procedural;
+        bool use_tex = (p.struct_texture && struct_tex != NULL && struct_tex->rgba != NULL);
+        bool structured = (use_proc || use_tex);
         float slice_norm = 1.12f / (float)ray_slices;
-        static const float sh_col[3]   = { 0.60f, 0.72f, 0.90f };
-        static const float hi_col[3]   = { 1.22f, 1.15f, 1.04f };
+        float na_eff = smoothstepf(0.0f, 0.85f, p.noise_amount);
+        float s_amt = structured ? na_eff : 0.0f;
+        float sh_col[3] = {
+            0.64f + (0.48f - 0.64f) * s_amt,
+            0.74f + (0.62f - 0.74f) * s_amt,
+            0.90f + (0.84f - 0.90f) * s_amt
+        };
+        float hi_col[3] = {
+            1.18f + (1.30f - 1.18f) * s_amt,
+            1.13f + (1.22f - 1.13f) * s_amt,
+            1.04f + (1.08f - 1.04f) * s_amt
+        };
         static const float near_col[3] = { 1.06f, 1.03f, 1.00f };
         static const float far_col[3]  = { 0.90f, 0.96f, 1.04f };
         static const float warm_c[3]   = { 1.18f, 1.03f, 0.80f };
@@ -644,7 +761,7 @@ bool nebel_fog_render_cpu_ex(const NebelImage *src,
                 float p1 = nebel_henyey_greenstein(cos_theta, p.sun_anisotropy);
                 float p2 = nebel_henyey_greenstein(cos_theta, p.sun_anisotropy * 0.45f);
 
-                /* Front-to-back 3D volumetric radiative transfer with directional self-shadowing */
+                /* Front-to-back 3D volumetric radiative transfer */
                 float d_span = (p.depth_max - p.depth_min) > 0.08f ? (p.depth_max - p.depth_min) : 0.08f;
                 float T = 1.0f;
                 float accum_L[3] = { 0.0f, 0.0f, 0.0f };
@@ -655,9 +772,25 @@ bool nebel_fog_render_cpu_ex(const NebelImage *src,
                     float in_front = smoothstepf(z_s - 0.055f, z_s + 0.045f, d);
                     if (in_front <= 1e-4f) continue;
 
+                    float z_vol = z_s;
+                    float shelf_w = 1.0f;
+                    if (s_amt > 0.001f) {
+                        float d0 = (frac - 0.20f) / 0.13f;
+                        float d1 = (frac - 0.54f) / 0.14f;
+                        float d2 = (frac - 0.86f) / 0.13f;
+                        float s0 = expf(-d0 * d0);
+                        float s1 = expf(-d1 * d1);
+                        float s2 = expf(-d2 * d2);
+                        float ssum = s0 + s1 + s2;
+                        float f_anc = (0.20f * s0 + 0.54f * s1 + 0.86f * s2) / (ssum > 0.0001f ? ssum : 0.0001f);
+                        float f_mix = frac + (f_anc - frac) * (0.74f * s_amt);
+                        z_vol = p.depth_min + d_span * f_mix;
+                        shelf_w = (1.0f - s_amt) + (0.18f + 1.24f * ssum) * s_amt;
+                    }
+
                     float sheet = 0.0f, crest = 0.0f;
-                    fog_volume_3d(adv_u, adv_v, z_s, &p, base_seed, &sheet, &crest);
-                    float weight = (0.76f + 0.48f * frac) * slice_norm;
+                    fog_volume_3d(adv_u, adv_v, z_vol, &p, base_seed, struct_tex, use_proc, use_tex, false, &sheet, &crest);
+                    float weight = (0.76f + 0.48f * frac) * slice_norm * shelf_w;
 
                     float edge_s = smoothstepf(0.04f, 0.88f, m + (sheet - 0.72f) * p.noise_amount * 0.88f);
                     float m_org_s = m * (1.0f - p.noise_amount) + (m * (0.20f + 1.18f * edge_s)) * p.noise_amount;
@@ -678,15 +811,21 @@ bool nebel_fog_render_cpu_ex(const NebelImage *src,
                         terrain_vis = expf(-(occ / (float)shadow_steps) * 1.75f);
                     }
 
-                    float sun_u = clampf(adv_u + sdir_x * 0.042f, 0.0f, 1.0f);
-                    float sun_v = clampf(adv_v + sdir_y * 0.042f - 0.022f, 0.0f, 1.0f);
-                    float z_sun = (z_s > 0.045f) ? (z_s - 0.045f) : 0.0f;
-                    float sheet_sun = fog_volume_macro_3d(sun_u, sun_v, z_sun, &p, base_seed);
-                    float self_shadow = expf(-sheet_sun * p.density * (0.25f + 0.65f * p.noise_amount));
+                    float sun_step = 0.042f + (0.026f - 0.042f) * s_amt;
+                    float sun_up   = 0.022f + (0.015f - 0.022f) * s_amt;
+                    float sun_dz   = 0.045f + (0.035f - 0.045f) * s_amt;
+                    float sun_u = clampf(adv_u + sdir_x * sun_step, 0.0f, 1.0f);
+                    float sun_v = clampf(adv_v + sdir_y * sun_step - sun_up, 0.0f, 1.0f);
+                    float z_sun = (z_vol > sun_dz) ? (z_vol - sun_dz) : 0.0f;
+                    float sheet_sun = 0.0f;
+                    fog_volume_3d(sun_u, sun_v, z_sun, &p, base_seed, struct_tex, use_proc, use_tex, true, &sheet_sun, NULL);
+                    float self_shadow = expf(-sheet_sun * p.density * (0.26f + (0.55f + (0.78f - 0.55f) * s_amt) * p.noise_amount));
                     float powder = 1.0f - 0.62f * expf(-sheet * p.density * 1.8f);
-                    float slice_vis = clampf(terrain_vis * (0.28f + 0.72f * self_shadow), 0.0f, 1.0f);
+                    float sh_floor = 0.30f + (0.22f - 0.30f) * s_amt;
+                    float slice_vis = clampf(terrain_vis * (sh_floor + (1.0f - sh_floor) * self_shadow), 0.0f, 1.0f);
+                    float bump = clampf((sheet - sheet_sun) * 0.80f, -0.65f, 0.72f) * s_amt;
 
-                    float relief_t = clampf(slice_vis * 0.72f + crest * 0.34f, 0.0f, 1.0f);
+                    float relief_t = clampf(slice_vis * (0.72f + (0.60f - 0.72f) * s_amt) + crest * 0.32f + bump * 0.36f, 0.0f, 1.0f);
                     float scatter = p1 * slice_vis * (0.82f + 0.52f * powder)
                                   + p2 * (0.32f + 0.68f * slice_vis) * 0.36f;
                     float sun_boost = p.sun_strength * scatter * (0.38f + 0.62f * s_lum);
@@ -846,7 +985,7 @@ bool nebel_fog_render_cpu(const NebelImage *src,
                           const uint8_t *protect_mask, int protect_w, int protect_h,
                           const NebelFogLayer *layers, int layer_count,
                           float sensor_noise, NebelImage *out) {
-    NebelRenderQuality q = { 12, 8, 10 };
+    NebelRenderQuality q = { 12, 8, 10, NULL };
     return nebel_fog_render_cpu_ex(src, depth_map, depth_w, depth_h,
                                    protect_mask, protect_w, protect_h,
                                    layers, layer_count, sensor_noise, &q, out);

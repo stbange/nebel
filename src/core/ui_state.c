@@ -316,6 +316,84 @@ bool nebel_ui_slider(NebelUiState *ui, uint32_t id, float x, float y, float w, f
     return changed;
 }
 
+bool nebel_ui_checkbox(NebelUiState *ui, uint32_t id, float x, float y, float w, float h,
+                       const char *label, bool checked) {
+    if (!ui || id == 0) return false;
+    bool hover = pt_in_rect(ui->mouse_x, ui->mouse_y, x, y, w, h);
+    ui->last_hovered = hover;
+    if (hover) {
+        ui->pointer_over_ui = true;
+        ui->hovered_widget = id;
+    }
+
+    bool clicked = false;
+    if (hover && ui->mouse_pressed) {
+        ui->active_widget = id;
+    }
+    if (ui->active_widget == id && ui->mouse_released && hover) {
+        clicked = true;
+    }
+
+    NebelUiDrawCmd bg = {0};
+    bg.type = NEBEL_UI_CMD_RECT;
+    bg.x = x; bg.y = y; bg.w = w; bg.h = h;
+    bg.radius = 4.0f;
+    if (hover) {
+        bg.color[0] = 0.21f; bg.color[1] = 0.24f; bg.color[2] = 0.29f; bg.color[3] = 0.92f;
+    } else {
+        bg.color[0] = 0.13f; bg.color[1] = 0.15f; bg.color[2] = 0.18f; bg.color[3] = 0.78f;
+    }
+    push_cmd(ui, &bg);
+
+    float box = clampf(h - 6.0f, 13.0f, 16.0f);
+    float bx = x + 4.0f;
+    float by = y + (h - box) * 0.5f;
+
+    NebelUiDrawCmd frame = {0};
+    frame.type = NEBEL_UI_CMD_RECT;
+    frame.x = bx; frame.y = by; frame.w = box; frame.h = box;
+    frame.radius = 3.5f;
+    if (checked) {
+        frame.color[0] = 0.30f; frame.color[1] = 0.64f; frame.color[2] = 0.90f; frame.color[3] = 1.0f;
+    } else {
+        frame.color[0] = 0.42f; frame.color[1] = 0.46f; frame.color[2] = 0.54f; frame.color[3] = 0.92f;
+    }
+    push_cmd(ui, &frame);
+
+    NebelUiDrawCmd inner = {0};
+    inner.type = NEBEL_UI_CMD_RECT;
+    inner.x = bx + 1.5f; inner.y = by + 1.5f; inner.w = box - 3.0f; inner.h = box - 3.0f;
+    inner.radius = 2.0f;
+    if (checked) {
+        inner.color[0] = 0.24f; inner.color[1] = 0.56f; inner.color[2] = 0.84f; inner.color[3] = 1.0f;
+    } else {
+        inner.color[0] = 0.09f; inner.color[1] = 0.11f; inner.color[2] = 0.14f; inner.color[3] = 1.0f;
+    }
+    push_cmd(ui, &inner);
+
+    if (checked) {
+        float mark = box * 0.42f;
+        NebelUiDrawCmd dot = {0};
+        dot.type = NEBEL_UI_CMD_RECT;
+        dot.x = bx + (box - mark) * 0.5f;
+        dot.y = by + (box - mark) * 0.5f;
+        dot.w = mark; dot.h = mark;
+        dot.radius = 1.5f;
+        dot.color[0] = 0.94f; dot.color[1] = 0.98f; dot.color[2] = 1.0f; dot.color[3] = 1.0f;
+        push_cmd(ui, &dot);
+    }
+
+    if (label && label[0]) {
+        float tx = bx + box + 6.0f;
+        if (checked) {
+            nebel_ui_label(ui, tx, y + h * 0.5f - 6.0f, label, 0.94f, 0.96f, 0.99f, 1.0f);
+        } else {
+            nebel_ui_label(ui, tx, y + h * 0.5f - 6.0f, label, 0.68f, 0.72f, 0.78f, 1.0f);
+        }
+    }
+    return clicked;
+}
+
 void nebel_ui_progress_bar(NebelUiState *ui, float x, float y, float w, float h,
                            float progress, const char *label) {
     if (!ui || w <= 2.0f || h <= 2.0f) return;

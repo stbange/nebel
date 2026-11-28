@@ -67,6 +67,9 @@ bool nebel_ui_accent_button(NebelUiState *ui, uint32_t id, float x, float y, flo
 bool nebel_ui_slider(NebelUiState *ui, uint32_t id, float x, float y, float w, float h,
                      const char *label, float *value, float min_v, float max_v);
 
+bool nebel_ui_checkbox(NebelUiState *ui, uint32_t id, float x, float y, float w, float h,
+                       const char *label, bool checked);
+
 void nebel_ui_progress_bar(NebelUiState *ui, float x, float y, float w, float h,
                            float progress, const char *label);
 

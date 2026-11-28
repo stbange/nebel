@@ -314,18 +314,41 @@ done:
     return ok;
 }
 
-static bool run_desktop_onnx(NebelAppState *app, SDL_SharedObject *lib,
-                             const char *model_path, bool is_da3, bool hd) {
-    NebelOrtGetApiBaseFn get_base = (NebelOrtGetApiBaseFn)SDL_LoadFunction(lib, "OrtGetApiBase");
-    if (!get_base) return false;
-    const OrtApiBase *base = get_base();
-    if (!base || !base->GetApi) return false;
-    const OrtApi *api = base->GetApi(17);
-    if (!api) api = base->GetApi(ORT_API_VERSION);
-    if (!api) return false;
+static SDL_SharedObject *g_ort_lib = NULL;
+static const OrtApi *g_ort_api = NULL;
+static OrtEnv *g_ort_env = NULL;
+
+static bool ensure_ort_runtime(const char *asset_root) {
+    if (g_ort_lib && g_ort_api && g_ort_env) return true;
+    if (!g_ort_lib) {
+        g_ort_lib = load_ort_library(asset_root);
+        if (!g_ort_lib) return false;
+    }
+    if (!g_ort_api) {
+        NebelOrtGetApiBaseFn get_base = (NebelOrtGetApiBaseFn)SDL_LoadFunction(g_ort_lib, "OrtGetApiBase");
+        if (!get_base) return false;
+        const OrtApiBase *base = get_base();
+        if (!base || !base->GetApi) return false;
+        g_ort_api = base->GetApi(17);
+        if (!g_ort_api) g_ort_api = base->GetApi(ORT_API_VERSION);
+        if (!g_ort_api) return false;
+    }
+    if (!g_ort_env) {
+        if (!ort_ok(g_ort_api, g_ort_api->CreateEnv(ORT_LOGGING_LEVEL_ERROR, "nebel", &g_ort_env))) {
+            g_ort_env = NULL;
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool run_desktop_onnx(NebelAppState *app, const char *model_path, bool is_da3, bool hd) {
+    const OrtApi *api = g_ort_api;
+    OrtEnv *env = g_ort_env;
+    SDL_SharedObject *lib = g_ort_lib;
+    if (!api || !env || !lib) return false;
 
     bool ok = false;
-    OrtEnv *env = NULL;
     OrtSessionOptions *opts = NULL;
     OrtSession *session = NULL;
     OrtAllocator *alloc = NULL;
@@ -333,9 +356,12 @@ static bool run_desktop_onnx(NebelAppState *app, SDL_SharedObject *lib,
     char *out_name = NULL;
     OrtMemoryInfo *mem_info = NULL;
 
-    if (!ort_ok(api, api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "nebel", &env))) goto cleanup;
     if (!ort_ok(api, api->CreateSessionOptions(&opts))) goto cleanup;
+#if defined(__APPLE__)
+    (void)ort_ok(api, api->SetIntraOpNumThreads(opts, 6));
+#else
     (void)ort_ok(api, api->SetIntraOpNumThreads(opts, 4));
+#endif
 
     /* Probe native GPU Execution Providers dynamically (DirectML / CoreML / CUDA) */
     const char *ep_label = "ONNX CPU";
@@ -346,8 +372,13 @@ static bool run_desktop_onnx(NebelAppState *app, SDL_SharedObject *lib,
     }
 #elif defined(__APPLE__)
     {
-        NebelAppendCoremlFn add_cml = (NebelAppendCoremlFn)SDL_LoadFunction(lib, "OrtSessionOptionsAppendExecutionProvider_CoreML");
-        if (add_cml && ort_ok(api, add_cml(opts, 0))) ep_label = "CoreML GPU";
+        /* CoreML fragments quantized INT8 ViTs into 130+ tiny CPU/ANE partitions;
+           keep CoreML for FP32/FP16 models (e.g. DA3Mono-Large) and run INT8 cleanly on NEON CPU. */
+        bool is_quant = (strstr(model_path, "quantized") != NULL);
+        if (!is_quant) {
+            NebelAppendCoremlFn add_cml = (NebelAppendCoremlFn)SDL_LoadFunction(lib, "OrtSessionOptionsAppendExecutionProvider_CoreML");
+            if (add_cml && ort_ok(api, add_cml(opts, 0))) ep_label = "CoreML GPU";
+        }
     }
 #else
     {
@@ -454,7 +485,6 @@ cleanup:
     if (alloc && out_name) (void)ort_ok(api, api->AllocatorFree(alloc, out_name));
     if (session) api->ReleaseSession(session);
     if (opts) api->ReleaseSessionOptions(opts);
-    if (env) api->ReleaseEnv(env);
     return ok;
 }
 
@@ -472,20 +502,16 @@ void nebel_depth_onnx_poll(NebelAppState *app) {
     char model_path[512];
     bool is_da3 = false;
     bool have_model = find_onnx_model(app->asset_root, model_path, sizeof(model_path), &is_da3);
-    SDL_SharedObject *lib = have_model ? load_ort_library(app->asset_root) : NULL;
 
-    if (have_model && lib) {
+    if (have_model && ensure_ort_runtime(app->asset_root)) {
         nebel_app_set_status(app, hd ? "Running Desktop HD PatchFusion Depth..."
                                      : "Running Desktop ONNX Depth...");
-        bool ok = run_desktop_onnx(app, lib, model_path, is_da3, hd);
-        SDL_UnloadObject(lib);
+        bool ok = run_desktop_onnx(app, model_path, is_da3, hd);
         if (ok) {
             nebel_app_set_status(app, is_da3 ? "HD Depth ready (DA3Mono-Large + RGB Guided)"
                                              : "HD Depth ready (DA2-Small + RGB Guided)");
             return;
         }
-    } else if (lib) {
-        SDL_UnloadObject(lib);
     }
 
     nebel_app_compute_classical_depth(app);

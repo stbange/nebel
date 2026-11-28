@@ -45,6 +45,7 @@ typedef struct {
     char asset_root[256];
     NebelImage orig_img;
     NebelImage work_img;
+    NebelImage fog_struct_tex; /* Persistent seamless RGBA fog detail texture (Option B) */
     float sensor_noise;
 
     float *depth_map;      /* work_img.width * work_img.height */

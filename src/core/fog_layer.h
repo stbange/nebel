@@ -29,6 +29,8 @@ typedef struct {
     float grain_match;      /* [0.0, 2.0] Sensor grain matching multiplier */
     float edge_refine;      /* [0.0, 1.0] Guided Filter edge snapping strength */
     uint32_t noise_seed;
+    bool struct_procedural; /* Option A: 3D Worley billows, depth shelves & clearings */
+    bool struct_texture;    /* Option B: Volumetric detail texture wisps & filaments */
     bool visible;
 } NebelFogParams;
 
@@ -44,6 +46,7 @@ typedef struct {
     int ray_slices;    /* Depth slices per pixel (8..32) */
     int shadow_steps;  /* 3D heightfield shadow ray steps toward sun (4..16) */
     int fluid_steps;   /* Terrain-guided flow advection iterations (0..32) */
+    const NebelImage *struct_tex; /* Seamless linear-data RGBA fog structure texture (Option B) */
 } NebelRenderQuality;
 
 void nebel_fog_params_default(NebelFogParams *p);

@@ -371,6 +371,20 @@ local function draw_desktop_sidebar(vw, vh)
         tip("tip_skytint")
         y = y + 17
 
+        -- Volumetric fog structure toggles: Option A (3D Billows) & Option B (Fine Wisps)
+        local cbw = (iw - 6) / 2
+        local use_proc = (nebel.layers.get(active, "struct_procedural") or 1) >= 0.5
+        if nebel.ui.checkbox(190, sx + pad, y, cbw, 20, i18n.t("chk_struct_proc"), use_proc) then
+            nebel.layers.set(active, "struct_procedural", use_proc and 0 or 1)
+        end
+        tip("tip_struct_proc")
+        local use_tex = (nebel.layers.get(active, "struct_texture") or 1) >= 0.5
+        if nebel.ui.checkbox(191, sx + pad + cbw + 6, y, cbw, 20, i18n.t("chk_struct_tex"), use_tex) then
+            nebel.layers.set(active, "struct_texture", use_tex and 0 or 1)
+        end
+        tip("tip_struct_tex")
+        y = y + 23
+
         for i, sl in ipairs(pipeline.sliders) do
             if y + 25 > vh - 90 then break end
             local val = nebel.layers.get(active, sl.key) or sl.min
@@ -416,7 +430,7 @@ local function draw_desktop_sidebar(vw, vh)
 end
 
 local function draw_mobile_drawer(vw, vh)
-    local dh = M.drawer_open and 146 or 42
+    local dh = M.drawer_open and 154 or 42
     local dy = vh - dh
     nebel.ui.panel(0, dy, vw, dh, 0.08, 0.09, 0.11, 0.96)
 
@@ -462,16 +476,24 @@ local function draw_mobile_drawer(vw, vh)
         if cs then nebel.brush.set_softness(sf) end
     elseif M.mobile_tab == "fog" and nebel.layers.count() > 0 then
         local half = (vw - 30) / 2
-        local d, cd = nebel.ui.slider(440, 10, cy, half, 36, i18n.t("sl_density"), nebel.layers.get(active, "density") or 1.8, 0.0, 4.0)
+        local use_proc = (nebel.layers.get(active, "struct_procedural") or 1) >= 0.5
+        if nebel.ui.checkbox(438, 10, cy, half, 26, i18n.t("chk_struct_proc"), use_proc) then
+            nebel.layers.set(active, "struct_procedural", use_proc and 0 or 1)
+        end
+        local use_tex = (nebel.layers.get(active, "struct_texture") or 1) >= 0.5
+        if nebel.ui.checkbox(439, 20 + half, cy, half, 26, i18n.t("chk_struct_tex"), use_tex) then
+            nebel.layers.set(active, "struct_texture", use_tex and 0 or 1)
+        end
+        local d, cd = nebel.ui.slider(440, 10, cy + 32, half, 34, i18n.t("sl_density"), nebel.layers.get(active, "density") or 1.8, 0.0, 4.0)
         if cd then nebel.layers.set(active, "density", d) end
-        local n, cn = nebel.ui.slider(441, 20 + half, cy, half, 36, i18n.t("sl_depth_min"), nebel.layers.get(active, "depth_min") or 0.40, 0.0, 0.95)
+        local n, cn = nebel.ui.slider(441, 20 + half, cy + 32, half, 34, i18n.t("sl_depth_min"), nebel.layers.get(active, "depth_min") or 0.40, 0.0, 0.95)
         if cn then
             nebel.layers.set(active, "depth_min", n)
             if nebel.brush.get_auto_depth() then nebel.brush.set_auto_depth(false) end
         end
-        local s, cs = nebel.ui.slider(442, 10, cy + 44, half, 36, i18n.t("sl_god_rays"), nebel.layers.get(active, "god_rays") or 0.35, 0.0, 1.5)
+        local s, cs = nebel.ui.slider(442, 10, cy + 70, half, 34, i18n.t("sl_god_rays"), nebel.layers.get(active, "god_rays") or 0.35, 0.0, 1.5)
         if cs then nebel.layers.set(active, "god_rays", s) end
-        local h, ch = nebel.ui.slider(443, 20 + half, cy + 44, half, 36, i18n.t("sl_fluid_flow"), nebel.layers.get(active, "fluid_flow") or 0.65, 0.0, 1.0)
+        local h, ch = nebel.ui.slider(443, 20 + half, cy + 70, half, 34, i18n.t("sl_fluid_flow"), nebel.layers.get(active, "fluid_flow") or 0.65, 0.0, 1.0)
         if ch then nebel.layers.set(active, "fluid_flow", h) end
     elseif M.mobile_tab == "layers" then
         if nebel.ui.button(450, 10, cy, 86, 38, i18n.t("btn_add_layer"), false, -1) then

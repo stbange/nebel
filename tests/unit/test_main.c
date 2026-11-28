@@ -525,6 +525,65 @@ static void test_brush_and_fog_module(void) {
     nebel_image_free(&hires);
     nebel_image_free(&hires_out);
 
+    /* Volumetric structure modes (Option A: 3D Billows, Option B: Fine Wisps, Hybrid A+B, Classic Smooth) */
+    NebelImage struct_tex = {0};
+    char stex_path[384];
+    CHECK(!nebel_image_load_raw(&struct_tex, "/nonexistent/missing_tex.png"));
+    CHECK(nebel_path_join_asset(NEBEL_SOURCE_DIR, "assets/textures/fog_structure.png", stex_path, sizeof(stex_path)));
+    CHECK(nebel_image_load_raw(&struct_tex, stex_path));
+    CHECK(struct_tex.width == 256 && struct_tex.height == 256);
+
+    NebelImage dark_bg = {0};
+    CHECK(nebel_image_alloc(&dark_bg, 64, 48));
+    float flat_d[64 * 48];
+    for (int i = 0; i < 64 * 48; i++) {
+        dark_bg.rgba[i * 4 + 0] = 0.04f;
+        dark_bg.rgba[i * 4 + 1] = 0.05f;
+        dark_bg.rgba[i * 4 + 2] = 0.06f;
+        dark_bg.rgba[i * 4 + 3] = 1.0f;
+        flat_d[i] = 0.85f;
+    }
+    NebelFogLayer sl;
+    CHECK(nebel_fog_layer_init(&sl, "StructTest", 64, 48));
+    memset(sl.mask, 255, 64u * 48u);
+    sl.params.density = 1.6f;
+    sl.params.depth_min = 0.2f; sl.params.depth_max = 1.0f;
+    sl.params.height_falloff = 0.0f;
+    sl.params.noise_amount = 0.85f;
+    sl.params.noise_scale = 5.5f;
+    sl.params.bloom_amount = 0.0f;
+    sl.params.god_rays = 0.0f;
+    sl.params.grain_match = 0.0f;
+    sl.params.edge_refine = 0.0f;
+    sl.params.fluid_flow = 0.0f;
+    NebelRenderQuality sq = { 10, 0, 0, &struct_tex };
+
+    NebelImage m_out[4] = { {0}, {0}, {0}, {0} };
+    float m_var[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    for (int mode = 0; mode < 4; mode++) {
+        sl.params.struct_procedural = (mode & 1) != 0;
+        sl.params.struct_texture    = (mode & 2) != 0;
+        CHECK(nebel_fog_render_cpu_ex(&dark_bg, flat_d, 64, 48, NULL, 0, 0, &sl, 1, 0.0f, &sq, &m_out[mode]));
+        double mean = 0.0, var = 0.0;
+        for (int i = 0; i < 64 * 48; i++) mean += m_out[mode].rgba[i * 4];
+        mean /= (64.0 * 48.0);
+        for (int i = 0; i < 64 * 48; i++) {
+            double d = m_out[mode].rgba[i * 4] - mean;
+            var += d * d;
+        }
+        m_var[mode] = (float)(var / (64.0 * 48.0));
+    }
+    /* Option A (1), Option B (2), and Hybrid A+B (3) all exhibit dramatically stronger structure than Smooth (0) */
+    CHECK(m_var[1] > m_var[0] * 1.5f);
+    CHECK(m_var[2] > m_var[0] * 1.5f);
+    CHECK(m_var[3] > m_var[0] * 1.5f);
+    CHECK(memcmp(m_out[3].rgba, m_out[1].rgba, 64u * 48u * 4u * sizeof(float)) != 0);
+    CHECK(memcmp(m_out[3].rgba, m_out[2].rgba, 64u * 48u * 4u * sizeof(float)) != 0);
+    for (int mode = 0; mode < 4; mode++) nebel_image_free(&m_out[mode]);
+    nebel_fog_layer_free(&sl);
+    nebel_image_free(&dark_bg);
+    nebel_image_free(&struct_tex);
+
     nebel_fog_layer_free(&pl);
     nebel_image_free(&pool_img);
     nebel_image_free(&ray_img);
@@ -625,6 +684,16 @@ static void test_undo_touch_ui_manifest(void) {
     CHECK(ui.last_hovered);
     nebel_ui_end_frame(&ui);
 
+    /* Checkbox widget: unchecked idle, hover+press+release click, checked state */
+    nebel_ui_begin_frame(&ui, 800, 600, 40, 20, true, true, false);
+    CHECK(!nebel_ui_checkbox(&ui, 12, 10, 10, 120, 22, "3D Billows", false));
+    CHECK(!nebel_ui_checkbox(&ui, 13, 140, 10, 120, 22, "Fine Wisps", true));
+    nebel_ui_end_frame(&ui);
+    nebel_ui_begin_frame(&ui, 800, 600, 40, 20, false, false, true);
+    CHECK(nebel_ui_checkbox(&ui, 12, 10, 10, 120, 22, "3D Billows", true));
+    CHECK(ui.last_hovered && ui.pointer_over_ui);
+    nebel_ui_end_frame(&ui);
+
     /* UTF-8 codepoint counting, accent button, progress bar & viewport-clamped German/Polish tooltip */
     CHECK(nebel_utf8_char_count("Größe Łódź") == 10);
     CHECK(nebel_utf8_char_count(NULL) == 0);
@@ -678,7 +747,8 @@ static void test_app_and_lua_bridge(void) {
         "airlight_r", "airlight_g", "airlight_b", "sun_x", "sun_y",
         "sun_strength", "sun_anisotropy", "noise_scale", "noise_amount",
         "bloom_amount", "god_rays", "shadow_pool",
-        "grain_match", "edge_refine", "noise_seed", "visible"
+        "grain_match", "edge_refine", "noise_seed",
+        "struct_procedural", "struct_texture", "visible"
     };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
         CHECK(nebel_app_set_layer_param(&app, 0, keys[i], 0.5f));
@@ -939,6 +1009,14 @@ static void test_app_and_lua_bridge(void) {
     nebel_ui_begin_frame(&app.ui, 1280, 760, 120, 20, false, false, false);
     CHECK(nebel_lua_eval(&lua, "nebel.ui.set_modal(true); nebel.ui.set_modal(false)"));
     CHECK(nebel_lua_on_ui(&lua, 1280, 760));
+    nebel_ui_end_frame(&app.ui);
+
+    /* Click nebel.ui.checkbox from Lua to verify toggle + audio feedback path */
+    nebel_ui_begin_frame(&app.ui, 1280, 760, 40, 20, true, true, false);
+    CHECK(nebel_lua_eval(&lua, "assert(not nebel.ui.checkbox(701, 10, 10, 100, 20, 'OptA', true))"));
+    nebel_ui_end_frame(&app.ui);
+    nebel_ui_begin_frame(&app.ui, 1280, 760, 40, 20, false, false, true);
+    CHECK(nebel_lua_eval(&lua, "assert(nebel.ui.checkbox(701, 10, 10, 100, 20, 'OptA', false))"));
     nebel_ui_end_frame(&app.ui);
 
     nebel_lua_free(&lua);
